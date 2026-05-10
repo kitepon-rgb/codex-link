@@ -196,6 +196,7 @@ docs/
 - [x] 新規 iPhone device session に既存 HostAccess を付与する MVP pairing flow を作る。
   - Host WebSocket は `host.pairingCode.create` で短命かつ一回限りの pairing code を発行できる。
   - iPhone app は Host picker から pairing code を redeem し、Relay の `/api/device-session/pair` で対象 Host への `operator` HostAccess を受け取る。
+  - 既存 `owner` HostAccess は pairing で `operator` に降格しない。
   - redeem 後は `client.subscribeHost` で対象 Host の event cache を購読し、Host / Project / Thread 表示に入る。
   - これは MVP placeholder pairing であり、production authentication、短命 user session、production ACL sharing は Phase 7。
 

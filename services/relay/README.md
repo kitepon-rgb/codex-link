@@ -88,6 +88,7 @@ Host は Relay WebSocket 接続後に `host.pairingCode.create` を送ると、R
 ```
 
 iPhone app は `POST /api/device-session/pair` に `Authorization: Bearer <deviceToken>` を付けて code を redeem します。成功すると、対象 Host への `operator` HostAccess が付与されます。code は短命かつ一回限りです。
+すでに `owner` HostAccess を持つ user が redeem した場合、Relay は owner role を `operator` へ降格しません。
 
 ```json
 {

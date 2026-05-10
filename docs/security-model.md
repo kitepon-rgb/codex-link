@@ -70,7 +70,7 @@ Host インストーラは設定を自動化してよいですが、未認証の
 
 MVP の device credential は、device ごとの bearer token です。Host bootstrap と iPhone placeholder device session 作成時に Relay が一度だけ token を返し、Relay 側は token 本体ではなく SHA-256 hash だけを保存します。Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke は `Authorization: Bearer <deviceToken>` を要求します。
 
-MVP の iPhone pairing は placeholder 実装です。Host が認証済み WebSocket 接続から短命かつ一回限りの pairing code を発行し、iPhone の認証済み placeholder device session がその code を redeem した場合だけ、対象 Host への `operator` HostAccess を付与します。Host ID を知っているだけでは pairing できません。
+MVP の iPhone pairing は placeholder 実装です。Host が認証済み WebSocket 接続から短命かつ一回限りの pairing code を発行し、iPhone の認証済み placeholder device session がその code を redeem した場合だけ、対象 Host への `operator` HostAccess を付与します。すでに `owner` HostAccess を持つ user の role は pairing で降格しません。Host ID を知っているだけでは pairing できません。
 
 MVP の device revocation も placeholder 実装です。Relay は revoke API を device credential で保護し、revoke 済み device の新規接続、pairing、既存 WebSocket session からの message を拒否し、active session を切断します。ただし外部 IdP、短命 user session、永続 credential storage はまだありません。
 

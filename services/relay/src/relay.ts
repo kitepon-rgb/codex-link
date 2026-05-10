@@ -324,6 +324,16 @@ export class RelayService {
       (access) => access.hostId === hostId && access.userId === userId,
     );
     if (existing) {
+      if (existing.role === "owner" && role !== "owner") {
+        this.recordAudit({
+          action: "host.access.retained",
+          outcome: "success",
+          userId,
+          hostId,
+          detail: { role: existing.role, requestedRole: role },
+        });
+        return existing;
+      }
       existing.role = role;
       this.recordAudit({
         action: "host.access.updated",

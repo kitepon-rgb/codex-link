@@ -347,6 +347,45 @@ describe("RelayService", () => {
     ).toThrow("already been used");
   });
 
+  it("does not downgrade owner HostAccess when the owner redeems a pairing code", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const teammate = relay.loginPlaceholder("teammate");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const ownerIphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    const pairingCode = relay.createHostPairingCode(host.id, {
+      now: new Date("2026-05-10T00:00:00Z"),
+      ttlMs: 60_000,
+    });
+
+    const grant = relay.redeemHostPairingCode({
+      userId: owner.id,
+      deviceId: ownerIphone.id,
+      pairingCode: pairingCode.code,
+      now: new Date("2026-05-10T00:00:10Z"),
+    });
+
+    expect(grant.access.role).toBe("owner");
+    expect(() =>
+      relay.grantHostAccessByOwner({
+        ownerUserId: owner.id,
+        hostId: host.id,
+        targetUserId: teammate.id,
+        role: "viewer",
+      }),
+    ).not.toThrow();
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "host.access.retained",
+        outcome: "success",
+        userId: owner.id,
+        hostId: host.id,
+        detail: { role: "owner", requestedRole: "operator" },
+      }),
+    );
+  });
+
   it("rejects expired Host pairing codes", () => {
     const relay = new RelayService();
     const owner = relay.loginPlaceholder("owner");
