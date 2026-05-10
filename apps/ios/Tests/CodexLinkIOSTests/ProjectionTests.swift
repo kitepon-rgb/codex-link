@@ -9,6 +9,7 @@ final class ProjectionTests: XCTestCase {
           "userId": "usr_1",
           "deviceId": "dev_1",
           "deviceToken": "device_token_1",
+          "deviceTokenExpiresAt": "2026-05-10T00:01:00.000Z",
           "displayName": "owner",
           "deviceName": "Owner iPhone"
         }
@@ -21,6 +22,7 @@ final class ProjectionTests: XCTestCase {
             userId: "usr_1",
             deviceId: "dev_1",
             deviceToken: "device_token_1",
+            deviceTokenExpiresAt: "2026-05-10T00:01:00.000Z",
             displayName: "owner",
             deviceName: "Owner iPhone"
         ))
@@ -99,6 +101,38 @@ final class ProjectionTests: XCTestCase {
                 userId: "usr_1",
                 deviceId: "dev_1",
                 revokedAt: "2026-05-10T00:00:00.000Z"
+            )
+        )
+    }
+
+    func testEncodesDeviceCredentialRotationRequestAndDecodesResult() throws {
+        let data = try JSONEncoder().encode(CodexLinkDeviceCredentialRotationRequest(
+            userId: "usr_1",
+            deviceId: "dev_1"
+        ))
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        XCTAssertEqual(object?["userId"] as? String, "usr_1")
+        XCTAssertEqual(object?["deviceId"] as? String, "dev_1")
+
+        let response = """
+        {
+          "relayUrl": "http://relay.test",
+          "userId": "usr_1",
+          "deviceId": "dev_1",
+          "deviceToken": "device_token_2",
+          "deviceTokenExpiresAt": "2026-05-10T00:02:00.000Z"
+        }
+        """.data(using: .utf8)!
+
+        XCTAssertEqual(
+            try JSONDecoder().decode(CodexLinkDeviceCredentialRotationResult.self, from: response),
+            CodexLinkDeviceCredentialRotationResult(
+                relayUrl: "http://relay.test",
+                userId: "usr_1",
+                deviceId: "dev_1",
+                deviceToken: "device_token_2",
+                deviceTokenExpiresAt: "2026-05-10T00:02:00.000Z"
             )
         )
     }
@@ -1095,6 +1129,7 @@ private final class MockDeviceSessionClient: CodexLinkDeviceSessionManaging, @un
     var revokedUserId: String?
     var revokedDeviceId: String?
     var revocationDeviceToken: String?
+    var rotatedDeviceToken: String?
 
     init(
         result: CodexLinkDeviceSession,
@@ -1151,6 +1186,21 @@ private final class MockDeviceSessionClient: CodexLinkDeviceSessionManaging, @un
             userId: userId,
             deviceId: deviceId,
             revokedAt: "2026-05-10T00:00:00.000Z"
+        )
+    }
+
+    func rotateDeviceCredential(
+        userId: String,
+        deviceId: String,
+        deviceToken: String
+    ) async throws -> CodexLinkDeviceCredentialRotationResult {
+        rotatedDeviceToken = deviceToken
+        return CodexLinkDeviceCredentialRotationResult(
+            relayUrl: result.relayUrl,
+            userId: userId,
+            deviceId: deviceId,
+            deviceToken: "rotated_device_token",
+            deviceTokenExpiresAt: "2026-05-10T00:01:00.000Z"
         )
     }
 }

@@ -372,6 +372,11 @@ interface DeviceSessionRevokeRequest {
   deviceId?: unknown;
 }
 
+interface DeviceCredentialRotateRequest {
+  userId?: unknown;
+  deviceId?: unknown;
+}
+
 interface HostAccessGrantRequest {
   ownerUserId?: unknown;
   ownerDeviceId?: unknown;
@@ -412,6 +417,7 @@ async function handleHttpRequest(
       userId: session.user.id,
       deviceId: session.device.id,
       deviceToken: session.deviceToken,
+      deviceTokenExpiresAt: session.expiresAt,
       displayName: session.user.displayName,
       deviceName: session.device.name,
     });
@@ -456,6 +462,26 @@ async function handleHttpRequest(
       userId: revocation.user.id,
       deviceId: revocation.device.id,
       revokedAt: revocation.device.revokedAt,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/device-credential/rotate") {
+    const body = (await readJson(request, relay.getMaxHttpBodyBytes())) as DeviceCredentialRotateRequest;
+    const userId = requiredString(body.userId, "userId") as UserId;
+    const deviceId = requiredString(body.deviceId, "deviceId") as DeviceId;
+    relay.authenticateUserDevice(userId, deviceId, bearerToken(request.headers.authorization));
+    relay.checkRateLimit({
+      scope: "http.device_credential.rotate",
+      key: deviceId,
+    });
+    const credential = relay.rotateDeviceCredential({ userId, deviceId });
+    writeJson(response, 200, {
+      relayUrl: relay.getPublicBaseUrl(),
+      userId: credential.user.id,
+      deviceId: credential.device.id,
+      deviceToken: credential.token,
+      deviceTokenExpiresAt: credential.expiresAt,
     });
     return;
   }
@@ -531,6 +557,7 @@ async function handleHttpRequest(
       userId: registration.user.id,
       deviceId: registration.device.id,
       deviceToken: registration.deviceToken,
+      deviceTokenExpiresAt: registration.expiresAt,
       hostId: registration.host.id,
       hostName: registration.host.name,
       project: project

@@ -6,6 +6,7 @@ public struct CodexLinkDeviceSession: Codable, Equatable, Sendable {
     public let userId: String
     public let deviceId: String
     public let deviceToken: String
+    public let deviceTokenExpiresAt: String?
     public let displayName: String
     public let deviceName: String
 
@@ -14,6 +15,7 @@ public struct CodexLinkDeviceSession: Codable, Equatable, Sendable {
         userId: String,
         deviceId: String,
         deviceToken: String,
+        deviceTokenExpiresAt: String? = nil,
         displayName: String,
         deviceName: String
     ) {
@@ -21,6 +23,7 @@ public struct CodexLinkDeviceSession: Codable, Equatable, Sendable {
         self.userId = userId
         self.deviceId = deviceId
         self.deviceToken = deviceToken
+        self.deviceTokenExpiresAt = deviceTokenExpiresAt
         self.displayName = displayName
         self.deviceName = deviceName
     }
@@ -55,6 +58,38 @@ public struct CodexLinkDeviceRevocationRequest: Encodable, Equatable, Sendable {
     public init(userId: String, deviceId: String) {
         self.userId = userId
         self.deviceId = deviceId
+    }
+}
+
+public struct CodexLinkDeviceCredentialRotationRequest: Encodable, Equatable, Sendable {
+    public let userId: String
+    public let deviceId: String
+
+    public init(userId: String, deviceId: String) {
+        self.userId = userId
+        self.deviceId = deviceId
+    }
+}
+
+public struct CodexLinkDeviceCredentialRotationResult: Codable, Equatable, Sendable {
+    public let relayUrl: String
+    public let userId: String
+    public let deviceId: String
+    public let deviceToken: String
+    public let deviceTokenExpiresAt: String
+
+    public init(
+        relayUrl: String,
+        userId: String,
+        deviceId: String,
+        deviceToken: String,
+        deviceTokenExpiresAt: String
+    ) {
+        self.relayUrl = relayUrl
+        self.userId = userId
+        self.deviceId = deviceId
+        self.deviceToken = deviceToken
+        self.deviceTokenExpiresAt = deviceTokenExpiresAt
     }
 }
 
@@ -131,8 +166,19 @@ public protocol CodexLinkDeviceSessionRevoking: Sendable {
     ) async throws -> CodexLinkDeviceRevocationResult
 }
 
+public protocol CodexLinkDeviceCredentialRotating: Sendable {
+    func rotateDeviceCredential(
+        userId: String,
+        deviceId: String,
+        deviceToken: String
+    ) async throws -> CodexLinkDeviceCredentialRotationResult
+}
+
 public typealias CodexLinkDeviceSessionManaging =
-    CodexLinkDeviceSessionRegistering & CodexLinkDeviceSessionPairing & CodexLinkDeviceSessionRevoking
+    CodexLinkDeviceSessionRegistering
+    & CodexLinkDeviceSessionPairing
+    & CodexLinkDeviceSessionRevoking
+    & CodexLinkDeviceCredentialRotating
 
 public protocol CodexLinkDeviceSessionStoring: Sendable {
     func loadDeviceSession() throws -> CodexLinkDeviceSession?
@@ -362,6 +408,31 @@ public final class CodexLinkDeviceSessionClient: @unchecked Sendable {
         return try decoder.decode(CodexLinkDeviceRevocationResult.self, from: data)
     }
 
+    public func rotateDeviceCredential(
+        userId: String,
+        deviceId: String,
+        deviceToken: String
+    ) async throws -> CodexLinkDeviceCredentialRotationResult {
+        let requestBody = CodexLinkDeviceCredentialRotationRequest(
+            userId: userId,
+            deviceId: deviceId
+        )
+        var request = URLRequest(url: try deviceCredentialRotationURL())
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "authorization")
+        request.httpBody = try encoder.encode(requestBody)
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw CodexLinkDeviceSessionClientError.invalidHTTPStatus(-1)
+        }
+        guard http.statusCode == 200 else {
+            throw CodexLinkDeviceSessionClientError.invalidHTTPStatus(http.statusCode)
+        }
+        return try decoder.decode(CodexLinkDeviceCredentialRotationResult.self, from: data)
+    }
+
     private func deviceSessionURL() throws -> URL {
         try apiURL(path: "/api/device-session")
     }
@@ -372,6 +443,10 @@ public final class CodexLinkDeviceSessionClient: @unchecked Sendable {
 
     private func deviceRevocationURL() throws -> URL {
         try apiURL(path: "/api/device-session/revoke")
+    }
+
+    private func deviceCredentialRotationURL() throws -> URL {
+        try apiURL(path: "/api/device-credential/rotate")
     }
 
     private func apiURL(path: String) throws -> URL {
@@ -400,3 +475,4 @@ public final class CodexLinkDeviceSessionClient: @unchecked Sendable {
 extension CodexLinkDeviceSessionClient: CodexLinkDeviceSessionRegistering {}
 extension CodexLinkDeviceSessionClient: CodexLinkDeviceSessionPairing {}
 extension CodexLinkDeviceSessionClient: CodexLinkDeviceSessionRevoking {}
+extension CodexLinkDeviceSessionClient: CodexLinkDeviceCredentialRotating {}

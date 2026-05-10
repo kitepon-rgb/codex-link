@@ -7,6 +7,7 @@ export interface RelayConfig {
   auditEventLimit?: number;
   maxHttpBodyBytes?: number;
   maxWebSocketPayloadBytes?: number;
+  deviceCredentialTtlMs?: number;
 }
 
 export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
@@ -28,6 +29,12 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
       "CODEX_LINK_MAX_WEBSOCKET_PAYLOAD_BYTES",
       1_048_576,
       1,
+    ),
+    deviceCredentialTtlMs: parseIntegerEnv(
+      env,
+      "CODEX_LINK_DEVICE_CREDENTIAL_TTL_MS",
+      30 * 24 * 60 * 60 * 1000,
+      60_000,
     ),
   };
 }

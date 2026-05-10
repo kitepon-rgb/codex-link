@@ -102,19 +102,37 @@ describe("RelayService", () => {
 
   it("issues hashed device credentials and authenticates active devices", () => {
     const state = createRelayState();
-    const relay = new RelayService(state);
+    const relay = new RelayService(state, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      deviceCredentialTtlMs: 60_000,
+    });
     const owner = relay.loginPlaceholder("owner");
     const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const issuedAt = new Date("2026-05-10T00:00:00.000Z");
 
     const credential = relay.issueDeviceCredential({
       userId: owner.id,
       deviceId: iphone.id,
+      now: issuedAt,
     });
 
     expect(credential.token.length).toBeGreaterThan(32);
+    expect(credential.expiresAt).toBe("2026-05-10T00:01:00.000Z");
     expect(state.deviceCredentials.get(iphone.id)?.tokenHash).toHaveLength(64);
     expect(state.deviceCredentials.get(iphone.id)?.tokenHash).not.toBe(credential.token);
-    expect(relay.authenticateUserDevice(owner.id, iphone.id, credential.token)).toBe(iphone);
+    expect(state.deviceCredentials.get(iphone.id)?.expiresAt).toBe("2026-05-10T00:01:00.000Z");
+    expect(
+      relay.authenticateUserDevice(owner.id, iphone.id, credential.token, {
+        now: new Date("2026-05-10T00:00:59.000Z"),
+      }),
+    ).toBe(iphone);
+    expect(() =>
+      relay.authenticateUserDevice(owner.id, iphone.id, credential.token, {
+        now: new Date("2026-05-10T00:01:00.000Z"),
+      }),
+    ).toThrow("Expired device credential");
     expect(() => relay.authenticateUserDevice(owner.id, iphone.id, null)).toThrow(
       RelayAuthnError,
     );
@@ -134,11 +152,66 @@ describe("RelayService", () => {
           outcome: "denied",
           userId: owner.id,
           deviceId: iphone.id,
+          detail: {
+            reason: "expired_credential",
+            expiresAt: "2026-05-10T00:01:00.000Z",
+          },
+        }),
+        expect.objectContaining({
+          action: "device.authentication.denied",
+          outcome: "denied",
+          userId: owner.id,
+          deviceId: iphone.id,
           detail: { reason: "invalid_credential" },
         }),
       ]),
     );
     expect(JSON.stringify(relay.listAuditEvents())).not.toContain(credential.token);
+  });
+
+  it("rotates device credentials and invalidates the previous token", () => {
+    const state = createRelayState();
+    const relay = new RelayService(state, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      deviceCredentialTtlMs: 60_000,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const first = relay.issueDeviceCredential({
+      userId: owner.id,
+      deviceId: iphone.id,
+      now: new Date("2026-05-10T00:00:00.000Z"),
+    });
+
+    const rotated = relay.rotateDeviceCredential({
+      userId: owner.id,
+      deviceId: iphone.id,
+      now: new Date("2026-05-10T00:00:30.000Z"),
+    });
+
+    expect(rotated.token).not.toBe(first.token);
+    expect(rotated.expiresAt).toBe("2026-05-10T00:01:30.000Z");
+    expect(() =>
+      relay.authenticateUserDevice(owner.id, iphone.id, first.token, {
+        now: new Date("2026-05-10T00:00:31.000Z"),
+      }),
+    ).toThrow("Invalid device credential");
+    expect(
+      relay.authenticateUserDevice(owner.id, iphone.id, rotated.token, {
+        now: new Date("2026-05-10T00:01:29.000Z"),
+      }),
+    ).toBe(iphone);
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "device.credential.rotated",
+        outcome: "success",
+        userId: owner.id,
+        deviceId: iphone.id,
+        detail: { kind: "iphone", expiresAt: "2026-05-10T00:01:30.000Z" },
+      }),
+    );
   });
 
   it("enforces in-memory rate limits per scope and key", () => {
@@ -466,11 +539,13 @@ describe("RelayService", () => {
   });
 
   it("revokes devices and rejects later Relay use", () => {
-    const relay = new RelayService();
+    const state = createRelayState();
+    const relay = new RelayService(state);
     const owner = relay.loginPlaceholder("owner");
     const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
     const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
     const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    relay.issueDeviceCredential({ userId: owner.id, deviceId: iphone.id });
     const pairingCode = relay.createHostPairingCode(host.id, {
       now: new Date("2026-05-10T00:00:00Z"),
       ttlMs: 60_000,
@@ -483,6 +558,7 @@ describe("RelayService", () => {
     });
 
     expect(revocation.device.revokedAt).toBe("2026-05-10T00:00:10.000Z");
+    expect(state.deviceCredentials.get(iphone.id)).toBeUndefined();
     expect(relay.listAuditEvents()).toContainEqual(
       expect.objectContaining({
         action: "device.revoked",

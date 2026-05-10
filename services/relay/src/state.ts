@@ -48,6 +48,7 @@ export interface DeviceCredential {
   deviceId: DeviceId;
   tokenHash: string;
   createdAt: string;
+  expiresAt: string;
 }
 
 export interface RelayState {

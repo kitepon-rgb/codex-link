@@ -784,6 +784,82 @@ describe("Relay WebSocket gateway", () => {
       message: "Device credential required",
     });
   });
+
+  it("rotates device credentials through the protected HTTP endpoint", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      deviceCredentialTtlMs: 60_000,
+    });
+    const baseUrl = await startRelay(relay, servers);
+    const httpBaseUrl = baseUrl.replace("ws://", "http://");
+
+    const deviceResponse = await fetch(`${httpBaseUrl}/api/device-session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        displayName: "owner",
+        deviceName: "Owner iPhone",
+      }),
+    });
+    const device = (await deviceResponse.json()) as {
+      userId: string;
+      deviceId: string;
+      deviceToken: string;
+      deviceTokenExpiresAt: string;
+    };
+    expect(device.deviceTokenExpiresAt).toMatch(/Z$/);
+
+    const rotateResponse = await fetch(`${httpBaseUrl}/api/device-credential/rotate`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${device.deviceToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        userId: device.userId,
+        deviceId: device.deviceId,
+      }),
+    });
+    expect(rotateResponse.status).toBe(200);
+    const rotated = (await rotateResponse.json()) as {
+      deviceToken: string;
+      deviceTokenExpiresAt: string;
+    };
+    expect(rotated.deviceToken).not.toBe(device.deviceToken);
+    expect(rotated.deviceTokenExpiresAt).toMatch(/Z$/);
+
+    const oldTokenResponse = await fetch(`${httpBaseUrl}/api/device-session/revoke`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${device.deviceToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        userId: device.userId,
+        deviceId: device.deviceId,
+      }),
+    });
+    expect(oldTokenResponse.status).toBe(401);
+    await expect(oldTokenResponse.json()).resolves.toMatchObject({
+      code: "AUTHENTICATION_REQUIRED",
+      message: "Invalid device credential",
+    });
+
+    const newTokenResponse = await fetch(`${httpBaseUrl}/api/device-session/revoke`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotated.deviceToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        userId: device.userId,
+        deviceId: device.deviceId,
+      }),
+    });
+    expect(newTokenResponse.status).toBe(200);
+  });
 });
 
 async function startRelay(

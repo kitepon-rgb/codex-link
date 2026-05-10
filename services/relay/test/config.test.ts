@@ -12,6 +12,7 @@ describe("loadRelayConfig", () => {
       auditEventLimit: 1000,
       maxHttpBodyBytes: 65_536,
       maxWebSocketPayloadBytes: 1_048_576,
+      deviceCredentialTtlMs: 2_592_000_000,
     });
   });
 
@@ -26,6 +27,7 @@ describe("loadRelayConfig", () => {
         CODEX_LINK_AUDIT_EVENT_LIMIT: "0",
         CODEX_LINK_MAX_HTTP_BODY_BYTES: "1024",
         CODEX_LINK_MAX_WEBSOCKET_PAYLOAD_BYTES: "2048",
+        CODEX_LINK_DEVICE_CREDENTIAL_TTL_MS: "60000",
       }),
     ).toMatchObject({
       publicBaseUrl: "https://relay.example.com",
@@ -36,6 +38,7 @@ describe("loadRelayConfig", () => {
       auditEventLimit: 0,
       maxHttpBodyBytes: 1024,
       maxWebSocketPayloadBytes: 2048,
+      deviceCredentialTtlMs: 60_000,
     });
   });
 
@@ -55,5 +58,10 @@ describe("loadRelayConfig", () => {
         CODEX_LINK_EVENT_CACHE_LIMIT: "-1",
       }),
     ).toThrow("CODEX_LINK_EVENT_CACHE_LIMIT must be an integer greater than or equal to 0");
+    expect(() =>
+      loadRelayConfig({
+        CODEX_LINK_DEVICE_CREDENTIAL_TTL_MS: "59999",
+      }),
+    ).toThrow("CODEX_LINK_DEVICE_CREDENTIAL_TTL_MS must be an integer greater than or equal to 60000");
   });
 });

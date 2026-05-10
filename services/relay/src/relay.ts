@@ -32,6 +32,7 @@ const DEFAULT_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_AUDIT_EVENT_LIMIT = 1000;
 const DEFAULT_MAX_HTTP_BODY_BYTES = 64 * 1024;
 const DEFAULT_MAX_WEBSOCKET_PAYLOAD_BYTES = 1024 * 1024;
+const DEFAULT_DEVICE_CREDENTIAL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export type ShareableHostAccessRole = Exclude<HostAccess["role"], "owner">;
 
@@ -51,6 +52,7 @@ export interface HostBootstrapRegistration {
   user: User;
   device: Device;
   deviceToken: string;
+  expiresAt: string;
   host: Host;
 }
 
@@ -58,6 +60,7 @@ export interface PlaceholderDeviceSession {
   user: User;
   device: Device;
   deviceToken: string;
+  expiresAt: string;
 }
 
 export interface HostPairingGrant {
@@ -90,6 +93,7 @@ export interface DeviceCredentialIssue {
   user: User;
   device: Device;
   token: string;
+  expiresAt: string;
 }
 
 export interface HostEventReplay {
@@ -149,6 +153,7 @@ export class RelayService {
   issueDeviceCredential(input: {
     userId: UserId;
     deviceId: DeviceId;
+    now?: Date;
   }): DeviceCredentialIssue {
     const user = this.requireUser(input.userId);
     const device = this.requireDevice(input.deviceId);
@@ -158,20 +163,68 @@ export class RelayService {
     if (device.revokedAt) {
       throw new RelayAuthzError("Revoked device cannot receive a credential");
     }
+    const now = input.now ?? new Date();
+    const expiresAt = new Date(now.getTime() + this.getDeviceCredentialTtlMs()).toISOString();
     const token = randomBytes(32).toString("base64url");
     this.state.deviceCredentials.set(device.id, {
       deviceId: device.id,
       tokenHash: hashDeviceToken(token),
-      createdAt: new Date().toISOString(),
+      createdAt: now.toISOString(),
+      expiresAt,
     });
     this.recordAudit({
       action: "device.credential.issued",
       outcome: "success",
       userId: user.id,
       deviceId: device.id,
-      detail: { kind: device.kind },
+      detail: { kind: device.kind, expiresAt },
     });
-    return { user, device, token };
+    return { user, device, token, expiresAt };
+  }
+
+  rotateDeviceCredential(input: {
+    userId: UserId;
+    deviceId: DeviceId;
+    now?: Date;
+  }): DeviceCredentialIssue {
+    const user = this.requireUser(input.userId);
+    const device = this.requireDevice(input.deviceId);
+    if (device.userId !== user.id) {
+      this.recordAudit({
+        action: "device.credential.rotation.denied",
+        outcome: "denied",
+        userId: user.id,
+        deviceId: device.id,
+        detail: { reason: "user_device_mismatch" },
+      });
+      throw new RelayAuthzError("Only the owning user can rotate a device credential");
+    }
+    if (device.revokedAt) {
+      this.recordAudit({
+        action: "device.credential.rotation.denied",
+        outcome: "denied",
+        userId: user.id,
+        deviceId: device.id,
+        detail: { reason: "revoked_device" },
+      });
+      throw new RelayAuthzError("Revoked device cannot rotate a credential");
+    }
+    const credentialInput: { userId: UserId; deviceId: DeviceId; now?: Date } = {
+      userId: user.id,
+      deviceId: device.id,
+    };
+    if (input.now) {
+      credentialInput.now = input.now;
+    }
+    const credential = this.issueDeviceCredential(credentialInput);
+    this.recordAudit({
+      action: "device.credential.rotated",
+      outcome: "success",
+      userId: user.id,
+      deviceId: device.id,
+      detail: { kind: device.kind, expiresAt: credential.expiresAt },
+    });
+    return credential;
   }
 
   registerHost(ownerUserId: UserId, deviceId: DeviceId, name: string): Host {
@@ -224,14 +277,14 @@ export class RelayService {
     const device = this.registerDevice(user.id, input.hostName, "mac-host");
     const credential = this.issueDeviceCredential({ userId: user.id, deviceId: device.id });
     const host = this.registerHost(user.id, device.id, input.hostName);
-    return { user, device, deviceToken: credential.token, host };
+    return { user, device, deviceToken: credential.token, expiresAt: credential.expiresAt, host };
   }
 
   registerPlaceholderIphoneSession(displayName: string, deviceName: string): PlaceholderDeviceSession {
     const user = this.loginPlaceholder(displayName);
     const device = this.registerDevice(user.id, deviceName, "iphone");
     const credential = this.issueDeviceCredential({ userId: user.id, deviceId: device.id });
-    return { user, device, deviceToken: credential.token };
+    return { user, device, deviceToken: credential.token, expiresAt: credential.expiresAt };
   }
 
   revokeDevice(input: { userId: UserId; deviceId: DeviceId; now?: Date }): DeviceRevocation {
@@ -247,6 +300,7 @@ export class RelayService {
       throw new RelayAuthzError("Only the owning user can revoke a device");
     }
     device.revokedAt = device.revokedAt ?? (input.now ?? new Date()).toISOString();
+    this.state.deviceCredentials.delete(device.id);
     if (device.kind === "mac-host") {
       for (const host of this.state.hosts.values()) {
         if (host.deviceId === device.id) {
@@ -666,7 +720,11 @@ export class RelayService {
     return device;
   }
 
-  authenticateDevice(deviceId: DeviceId, token: string | null): Device {
+  authenticateDevice(
+    deviceId: DeviceId,
+    token: string | null,
+    options: { now?: Date } = {},
+  ): Device {
     if (!token) {
       this.recordAudit({
         action: "device.authentication.denied",
@@ -688,12 +746,28 @@ export class RelayService {
       });
       throw new RelayAuthnError("Invalid device credential");
     }
+    const now = options.now ?? new Date();
+    if (Date.parse(credential.expiresAt) <= now.getTime()) {
+      this.recordAudit({
+        action: "device.authentication.denied",
+        outcome: "denied",
+        userId: device.userId,
+        deviceId,
+        detail: { reason: "expired_credential", expiresAt: credential.expiresAt },
+      });
+      throw new RelayAuthnError("Expired device credential");
+    }
     return device;
   }
 
-  authenticateUserDevice(userId: UserId, deviceId: DeviceId, token: string | null): Device {
+  authenticateUserDevice(
+    userId: UserId,
+    deviceId: DeviceId,
+    token: string | null,
+    options: { now?: Date } = {},
+  ): Device {
     this.requireUser(userId);
-    const device = this.authenticateDevice(deviceId, token);
+    const device = this.authenticateDevice(deviceId, token, options);
     if (device.userId !== userId) {
       this.recordAudit({
         action: "device.authentication.denied",
@@ -724,6 +798,13 @@ export class RelayService {
     return Number.isFinite(configuredLimit)
       ? Math.max(1, configuredLimit)
       : DEFAULT_MAX_WEBSOCKET_PAYLOAD_BYTES;
+  }
+
+  getDeviceCredentialTtlMs(): number {
+    const configuredTtl = this.config.deviceCredentialTtlMs ?? DEFAULT_DEVICE_CREDENTIAL_TTL_MS;
+    return Number.isFinite(configuredTtl)
+      ? Math.max(60_000, configuredTtl)
+      : DEFAULT_DEVICE_CREDENTIAL_TTL_MS;
   }
 
   private requireUser(userId: UserId): User {

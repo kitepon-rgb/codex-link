@@ -68,11 +68,11 @@ Host ID を知っていることは、認可ではありません。
 
 Host インストーラは設定を自動化してよいですが、未認証の Host を作ってはいけません。一発インストールの結果は、認証済みで、ユーザー所有で、取り消し可能なデバイス登録である必要があります。
 
-MVP の device credential は、device ごとの bearer token です。Host bootstrap と iPhone placeholder device session 作成時に Relay が一度だけ token を返し、Relay 側は token 本体ではなく SHA-256 hash だけを保存します。iPhone app は device session bearer token を Keychain に保存します。Mac Host installer は bearer token を macOS Keychain に保存し、`host.json` には Keychain reference だけを置きます。`host.json` は `chmod 600` 前提で、runtime も group / others readable な config を拒否します。Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke は `Authorization: Bearer <deviceToken>` を要求します。
+MVP の device credential は、device ごとの bearer token です。Host bootstrap と iPhone placeholder device session 作成時に Relay が token を返し、Relay 側は token 本体ではなく SHA-256 hash と expiry だけを保存します。credential は `CODEX_LINK_DEVICE_CREDENTIAL_TTL_MS` の TTL を持ち、期限切れ credential は認証拒否します。credential rotate API は有効な bearer token を要求し、古い token を即時に無効化して新しい token / expiry を返します。iPhone app は device session bearer token を Keychain に保存します。Mac Host installer は bearer token を macOS Keychain に保存し、`host.json` には Keychain reference だけを置きます。`host.json` は `chmod 600` 前提で、runtime も group / others readable な config を拒否します。Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke は `Authorization: Bearer <deviceToken>` を要求します。
 
 MVP の iPhone pairing は placeholder 実装です。Host が認証済み WebSocket 接続から短命かつ一回限りの pairing code を発行し、iPhone の認証済み placeholder device session がその code を redeem した場合だけ、対象 Host への `operator` HostAccess を付与します。すでに `owner` HostAccess を持つ user の role は pairing で降格しません。Host ID を知っているだけでは pairing できません。
 
-MVP の device revocation も placeholder 実装です。Relay は revoke API を device credential で保護し、revoke 済み device の新規接続、pairing、既存 WebSocket session からの message を拒否し、active session を切断します。ただし外部 IdP、短命 user session、永続 credential storage はまだありません。
+MVP の device revocation も placeholder 実装です。Relay は revoke API を device credential で保護し、revoke 済み device の credential を削除し、新規接続、pairing、既存 WebSocket session からの message を拒否し、active session を切断します。ただし外部 IdP、短命 user session、永続 credential storage はまだありません。
 
 この pairing / revocation / device credential は本物の multi-user authentication の代替ではありません。外部 IdP、短命 user session、production 向け credential lifecycle などは hardening phase で完成させます。
 
