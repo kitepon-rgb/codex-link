@@ -28,8 +28,8 @@ Relay がしないもの:
 
 Phase 2 では、DB や HTTP server を入れる前に、Relay の中心ルールを TypeScript のインメモリ service として置いています。
 
-- `src/relay.ts`: User / Device / Host / HostAccess / Connection / event cache / Host pairing code の操作。
-- `src/websocket.ts`: Host / iPhone placeholder WebSocket gateway、Host bootstrap HTTP API、device session pairing API。
+- `src/relay.ts`: User / Device / Host / HostAccess / Connection / event cache / Host pairing code / audit metadata の操作。
+- `src/websocket.ts`: Host / iPhone placeholder WebSocket gateway、Host bootstrap HTTP API、device session pairing / revocation API。
 - `src/state.ts`: インメモリ状態。
 - `src/config.ts`: Relay ドメインと event cache limit の設定。
 - `test/relay.test.ts`: Host 一覧の ACL filter と Host route 認可のテスト。
@@ -96,17 +96,39 @@ response:
 ```json
 {
   "relayUrl": "https://relay.example.com",
-  "userId": "usr_1",
-  "deviceId": "dev_1",
+  "userId": "usr_2",
+  "deviceId": "dev_2",
   "hostId": "host_1",
   "hostName": "Owner MacBook",
-  "project": {
-    "id": "project_1",
-    "name": "Codex Link",
-    "path": "/Users/kite/Developer/codex-link"
-  }
+  "role": "operator"
 }
 ```
+
+MVP placeholder device session は `POST /api/device-session/revoke` で revoke できます。Relay は revoked device の新規 WebSocket 接続、pairing、既存 WebSocket session からの message を拒否します。active WebSocket session がある場合は `relay.error` を送って切断します。
+
+```json
+{
+  "userId": "usr_2",
+  "deviceId": "dev_2"
+}
+```
+
+response:
+
+```json
+{
+  "relayUrl": "https://relay.example.com",
+  "userId": "usr_2",
+  "deviceId": "dev_2",
+  "revokedAt": "2026-05-10T00:00:00.000Z"
+}
+```
+
+## Audit Metadata
+
+Relay は Host routing、HostAccess grant / denial、pairing code 発行 / redeem、device registration / revocation の最小 audit metadata を記録します。
+
+Audit metadata には pairing code 本体、client.toHost payload、Codex transcript、project folder 内容は保存しません。
 
 ## コマンド
 

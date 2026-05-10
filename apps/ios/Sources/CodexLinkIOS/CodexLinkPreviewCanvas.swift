@@ -69,7 +69,7 @@ struct CodexLinkPreviewCanvas: View {
         case .selectThread(let projectId, let threadId), .restoreThread(let projectId, let threadId):
             selection.projectId = projectId
             selection.threadId = threadId
-        case .pairHost, .showHostSwitcher, .showInspector, .unsupportedOperation:
+        case .pairHost, .revokeDeviceSession, .showHostSwitcher, .showInspector, .unsupportedOperation:
             break
         }
     }

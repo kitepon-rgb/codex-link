@@ -142,6 +142,10 @@ public final class CodexLinkAppViewModel: ObservableObject {
             Task { [weak self] in
                 await self?.pairHost(pairingCode: pairingCode)
             }
+        case .revokeDeviceSession:
+            Task { [weak self] in
+                await self?.revokeDeviceSession()
+            }
         case .showHostSwitcher:
             selection = CodexLinkSessionSelection()
         case .showInspector:
@@ -248,6 +252,44 @@ public final class CodexLinkAppViewModel: ObservableObject {
         } catch {
             recordError(describe(error))
             connectionState = .failed
+        }
+    }
+
+    private func revokeDeviceSession() async {
+        guard let deviceSession else {
+            clearLocalSessionState()
+            return
+        }
+        guard let deviceSessionClient else {
+            recordError("Codex Link device session client is missing.")
+            return
+        }
+
+        do {
+            _ = try await deviceSessionClient.revokeDevice(
+                userId: deviceSession.userId,
+                deviceId: deviceSession.deviceId
+            )
+            clearLocalSessionState()
+        } catch {
+            recordError(describe(error))
+            connectionState = .failed
+        }
+    }
+
+    private func clearLocalSessionState() {
+        stop()
+        projection = CodexLinkProjection()
+        selection = CodexLinkSessionSelection()
+        deviceSession = nil
+        lastRelaySequence = nil
+        lastErrorMessage = nil
+        connectionState = .disconnected
+        do {
+            try deviceSessionStore.clearDeviceSession()
+            try bookmarkStore.clearBookmark()
+        } catch {
+            recordError(describe(error))
         }
     }
 

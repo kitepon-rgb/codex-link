@@ -32,6 +32,14 @@ describe("RelayService", () => {
     expect(() => relay.routeToHost(other.id, host.id, { type: "turn.start" })).toThrow(
       RelayAuthzError,
     );
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "host.access.denied",
+        outcome: "denied",
+        userId: other.id,
+        hostId: host.id,
+      }),
+    );
   });
 
   it("allows Host routes with HostAccess", () => {
@@ -73,6 +81,34 @@ describe("RelayService", () => {
       access: { hostId: host.id, userId: guest.id, role: "operator" },
     });
     expect(relay.listHostsForUser(guest.id)).toEqual([host]);
+    expect(relay.listAuditEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "host.pairing_code.created",
+          outcome: "success",
+          hostId: host.id,
+        }),
+        expect.objectContaining({
+          action: "host.access.granted",
+          outcome: "success",
+          userId: guest.id,
+          hostId: host.id,
+          detail: { role: "operator" },
+        }),
+        expect.objectContaining({
+          action: "host.pairing_code.redeemed",
+          outcome: "success",
+          userId: guest.id,
+          deviceId: guestIphone.id,
+          hostId: host.id,
+        }),
+      ]),
+    );
+    const createdAudit = relay
+      .listAuditEvents()
+      .find((event) => event.action === "host.pairing_code.created");
+    expect(createdAudit?.detail).toEqual({ expiresAt: pairingCode.expiresAt });
+    expect(JSON.stringify(createdAudit)).not.toContain(pairingCode.code);
     expect(() =>
       relay.redeemHostPairingCode({
         userId: guest.id,
@@ -103,6 +139,86 @@ describe("RelayService", () => {
       }),
     ).toThrow("expired");
     expect(relay.listHostsForUser(guest.id)).toEqual([]);
+  });
+
+  it("revokes devices and rejects later Relay use", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const pairingCode = relay.createHostPairingCode(host.id, {
+      now: new Date("2026-05-10T00:00:00Z"),
+      ttlMs: 60_000,
+    });
+
+    const revocation = relay.revokeDevice({
+      userId: owner.id,
+      deviceId: iphone.id,
+      now: new Date("2026-05-10T00:00:10Z"),
+    });
+
+    expect(revocation.device.revokedAt).toBe("2026-05-10T00:00:10.000Z");
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "device.revoked",
+        outcome: "success",
+        userId: owner.id,
+        deviceId: iphone.id,
+        detail: {
+          kind: "iphone",
+          revokedAt: "2026-05-10T00:00:10.000Z",
+        },
+      }),
+    );
+    expect(() => relay.connectClientDevice(owner.id, iphone.id)).toThrow("Revoked device");
+    expect(() =>
+      relay.redeemHostPairingCode({
+        userId: owner.id,
+        deviceId: iphone.id,
+        pairingCode: pairingCode.code,
+      }),
+    ).toThrow("Revoked device");
+  });
+
+  it("does not allow a user to revoke another user's device", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const stranger = relay.loginPlaceholder("stranger");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+
+    expect(() =>
+      relay.revokeDevice({
+        userId: stranger.id,
+        deviceId: iphone.id,
+      }),
+    ).toThrow(RelayAuthzError);
+    expect(iphone.revokedAt).toBeNull();
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "device.revocation.denied",
+        outcome: "denied",
+        userId: stranger.id,
+        deviceId: iphone.id,
+      }),
+    );
+  });
+
+  it("marks Hosts offline when their Host device is revoked", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+
+    relay.markHostOnline(host.id);
+    relay.revokeDevice({
+      userId: owner.id,
+      deviceId: mac.id,
+      now: new Date("2026-05-10T00:00:10Z"),
+    });
+
+    expect(relay.listHostsForUser(owner.id)[0]?.status).toBe("offline");
+    expect(() => relay.connectDevice(mac.id, host.id)).toThrow("Revoked device");
   });
 
   it("keeps a bounded event cache per Host", () => {

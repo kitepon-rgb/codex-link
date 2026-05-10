@@ -31,6 +31,7 @@ public enum CodexLinkConnectionState: String, Codable, Equatable, Sendable {
 
 public enum CodexLinkUIAction: Equatable, Sendable {
     case pairHost(pairingCode: String)
+    case revokeDeviceSession
     case selectHost(hostId: String)
     case selectProject(projectId: String)
     case selectThread(projectId: String, threadId: String)

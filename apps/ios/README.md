@@ -30,7 +30,7 @@ MVP で扱うもの:
 - `Sources/CodexLinkIOS/CodexLinkModels.swift`: Host / Project / Thread / Turn / transcript / timeline / approval / LiveActivityState の表示用 model。
 - `Sources/CodexLinkIOS/RelayMessages.swift`: Relay から届く `host.event` と Codex Link event の decode。
 - `Sources/CodexLinkIOS/RelayCommands.swift`: Host へ送る `codex.turn.start` / `codex.turn.steer` / `codex.turn.interrupt` / `codex.thread.restore` command。
-- `Sources/CodexLinkIOS/DeviceSession.swift`: MVP placeholder login と Host pairing code redeem 用の iPhone device session client。
+- `Sources/CodexLinkIOS/DeviceSession.swift`: MVP placeholder login、Host pairing code redeem、device session revoke 用の iPhone device session client。
 - `Sources/CodexLinkIOS/SessionProjection.swift`: event stream から transcript、timeline、approval、LiveActivityState を復元する projection。
 - `Sources/CodexLinkIOS/CodexLinkUIState.swift`: UI selection、connection state、UI action。
 - `Sources/CodexLinkIOS/CodexLinkRootView.swift`: Host list、Project / Thread drawer、conversation screen、composer、timeline、approval UI。
@@ -58,6 +58,6 @@ xcodebuild -project CodexLink.xcodeproj -scheme CodexLinkApp -destination 'gener
 実機で動かす場合は、iPhone から到達できる Relay URL に変更してください。
 
 新規 iPhone device session は、Mac Host 起動時に表示される短命 pairing code を Host picker の `Pair Host` へ入力すると、Relay の `/api/device-session/pair` で既存 HostAccess を受け取り、その Host の event cache を購読します。
-これは MVP placeholder pairing です。本物の multi-user authentication、device revocation、ACL sharing は Phase 7 で扱います。
+これは MVP placeholder pairing です。device session revoke API はありますが、本物の multi-user authentication、device credential、ACL sharing は Phase 7 で扱います。
 リアルタイム確認は、Xcode で `Package.swift` を開き、`CodexLinkPreviewCanvas.swift` の `#Preview` を表示すると使えます。
 Preview は conversation approval、running、Host picker、reconnecting、offline の状態を切り替えて確認できます。

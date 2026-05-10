@@ -14,7 +14,13 @@ import { RelayAuthzError, RelayError, RelayNotFoundError } from "./errors.js";
 import { createId } from "./id.js";
 import type { RelayConfig } from "./config.js";
 import { loadRelayConfig } from "./config.js";
-import type { CachedRelayEvent, HostPairingCode, RelayState } from "./state.js";
+import type {
+  CachedRelayEvent,
+  HostPairingCode,
+  RelayAuditEvent,
+  RelayAuditOutcome,
+  RelayState,
+} from "./state.js";
 import { createRelayState } from "./state.js";
 
 const DEFAULT_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
@@ -49,6 +55,11 @@ export interface HostPairingGrant {
   access: HostAccess;
 }
 
+export interface DeviceRevocation {
+  user: User;
+  device: Device;
+}
+
 export interface HostEventReplay {
   events: CachedRelayEvent[];
   latestSequence: number;
@@ -79,11 +90,21 @@ export class RelayService {
       revokedAt: null,
     };
     this.state.devices.set(device.id, device);
+    this.recordAudit({
+      action: "device.registered",
+      outcome: "success",
+      userId,
+      deviceId: device.id,
+      detail: { kind },
+    });
     return device;
   }
 
   registerHost(ownerUserId: UserId, deviceId: DeviceId, name: string): Host {
     const device = this.requireDevice(deviceId);
+    if (device.revokedAt) {
+      throw new RelayAuthzError("Revoked device cannot register a Host");
+    }
     if (device.userId !== ownerUserId || device.kind !== "mac-host") {
       throw new RelayAuthzError("Only the owner mac-host device can register a Host");
     }
@@ -100,6 +121,20 @@ export class RelayService {
       hostId: host.id,
       userId: ownerUserId,
       role: "owner",
+    });
+    this.recordAudit({
+      action: "host.registered",
+      outcome: "success",
+      userId: ownerUserId,
+      deviceId,
+      hostId: host.id,
+    });
+    this.recordAudit({
+      action: "host.access.granted",
+      outcome: "success",
+      userId: ownerUserId,
+      hostId: host.id,
+      detail: { role: "owner" },
     });
     return host;
   }
@@ -123,6 +158,36 @@ export class RelayService {
     return { user, device };
   }
 
+  revokeDevice(input: { userId: UserId; deviceId: DeviceId; now?: Date }): DeviceRevocation {
+    const user = this.requireUser(input.userId);
+    const device = this.requireDevice(input.deviceId);
+    if (device.userId !== user.id) {
+      this.recordAudit({
+        action: "device.revocation.denied",
+        outcome: "denied",
+        userId: user.id,
+        deviceId: device.id,
+      });
+      throw new RelayAuthzError("Only the owning user can revoke a device");
+    }
+    device.revokedAt = device.revokedAt ?? (input.now ?? new Date()).toISOString();
+    if (device.kind === "mac-host") {
+      for (const host of this.state.hosts.values()) {
+        if (host.deviceId === device.id) {
+          host.status = "offline";
+        }
+      }
+    }
+    this.recordAudit({
+      action: "device.revoked",
+      outcome: "success",
+      userId: user.id,
+      deviceId: device.id,
+      detail: { kind: device.kind, revokedAt: device.revokedAt },
+    });
+    return { user, device };
+  }
+
   createHostPairingCode(
     hostId: HostId,
     options: { now?: Date; ttlMs?: number } = {},
@@ -143,6 +208,12 @@ export class RelayService {
       consumedAt: null,
     };
     this.state.hostPairingCodes.set(normalizePairingCode(code), pairingCode);
+    this.recordAudit({
+      action: "host.pairing_code.created",
+      outcome: "success",
+      hostId,
+      detail: { expiresAt },
+    });
     return pairingCode;
   }
 
@@ -172,6 +243,13 @@ export class RelayService {
     pairingCode.consumedAt = now.toISOString();
     const host = this.requireHost(pairingCode.hostId);
     const access = this.grantHostAccess(host.id, user.id, "operator");
+    this.recordAudit({
+      action: "host.pairing_code.redeemed",
+      outcome: "success",
+      userId: user.id,
+      deviceId: device.id,
+      hostId: host.id,
+    });
     return { user, device, host, access };
   }
 
@@ -183,10 +261,24 @@ export class RelayService {
     );
     if (existing) {
       existing.role = role;
+      this.recordAudit({
+        action: "host.access.updated",
+        outcome: "success",
+        userId,
+        hostId,
+        detail: { role },
+      });
       return existing;
     }
     const access: HostAccess = { hostId, userId, role };
     this.state.hostAccess.push(access);
+    this.recordAudit({
+      action: "host.access.granted",
+      outcome: "success",
+      userId,
+      hostId,
+      detail: { role },
+    });
     return access;
   }
 
@@ -201,10 +293,7 @@ export class RelayService {
   }
 
   connectDevice(deviceId: DeviceId, hostId?: HostId): Connection {
-    const device = this.requireDevice(deviceId);
-    if (device.revokedAt) {
-      throw new RelayAuthzError("Revoked device cannot connect");
-    }
+    const device = this.assertActiveDevice(deviceId);
     if (hostId) {
       const host = this.requireHost(hostId);
       if (host.deviceId !== deviceId) {
@@ -225,10 +314,7 @@ export class RelayService {
 
   connectClientDevice(userId: UserId, deviceId: DeviceId): Connection {
     this.requireUser(userId);
-    const device = this.requireDevice(deviceId);
-    if (device.revokedAt) {
-      throw new RelayAuthzError("Revoked device cannot connect");
-    }
+    const device = this.assertActiveDevice(deviceId);
     if (device.userId !== userId || device.kind !== "iphone") {
       throw new RelayAuthzError("Client connection must use the user's iPhone device");
     }
@@ -254,7 +340,14 @@ export class RelayService {
   }
 
   routeToHost(userId: UserId, hostId: HostId, payload: unknown): RoutedHostMessage {
-    this.assertHostAccess(userId, hostId);
+    const access = this.assertHostAccess(userId, hostId);
+    this.recordAudit({
+      action: "host.route.authorized",
+      outcome: "success",
+      userId,
+      hostId,
+      detail: { role: access.role },
+    });
     return { userId, hostId, payload };
   }
 
@@ -293,6 +386,13 @@ export class RelayService {
     const latestSequence = events.at(-1)?.sequence ?? afterSequence;
 
     if (afterSequence > 0 && afterSequence < droppedThroughSequence) {
+      this.recordAudit({
+        action: "host.event_replay.denied",
+        outcome: "denied",
+        userId,
+        hostId,
+        detail: { afterSequence, droppedThroughSequence },
+      });
       throw new RelayError(
         `Host event cache dropped events through sequence ${droppedThroughSequence}; cannot replay after sequence ${afterSequence}`,
         "HOST_EVENT_CACHE_GAP",
@@ -312,9 +412,27 @@ export class RelayService {
       (candidate) => candidate.userId === userId && candidate.hostId === hostId,
     );
     if (!access) {
+      this.recordAudit({
+        action: "host.access.denied",
+        outcome: "denied",
+        userId,
+        hostId,
+      });
       throw new RelayAuthzError();
     }
     return access;
+  }
+
+  listAuditEvents(): RelayAuditEvent[] {
+    return [...this.state.auditEvents];
+  }
+
+  assertActiveDevice(deviceId: DeviceId): Device {
+    const device = this.requireDevice(deviceId);
+    if (device.revokedAt) {
+      throw new RelayAuthzError("Revoked device cannot connect");
+    }
+    return device;
   }
 
   getPublicBaseUrl(): string {
@@ -352,6 +470,36 @@ export class RelayService {
       throw new RelayAuthzError("Invalid Host pairing code");
     }
     return pairingCode;
+  }
+
+  private recordAudit(input: {
+    action: string;
+    outcome: RelayAuditOutcome;
+    userId?: UserId;
+    deviceId?: DeviceId;
+    hostId?: HostId;
+    detail?: Record<string, string | number | boolean | null>;
+  }): RelayAuditEvent {
+    const event: RelayAuditEvent = {
+      sequence: this.state.nextAuditSequence++,
+      action: input.action,
+      outcome: input.outcome,
+      occurredAt: new Date().toISOString(),
+    };
+    if (input.userId) {
+      event.userId = input.userId;
+    }
+    if (input.deviceId) {
+      event.deviceId = input.deviceId;
+    }
+    if (input.hostId) {
+      event.hostId = input.hostId;
+    }
+    if (input.detail) {
+      event.detail = input.detail;
+    }
+    this.state.auditEvents.push(event);
+    return event;
   }
 }
 

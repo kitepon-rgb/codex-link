@@ -44,6 +44,16 @@ public struct CodexLinkDevicePairingRequest: Encodable, Equatable, Sendable {
     }
 }
 
+public struct CodexLinkDeviceRevocationRequest: Encodable, Equatable, Sendable {
+    public let userId: String
+    public let deviceId: String
+
+    public init(userId: String, deviceId: String) {
+        self.userId = userId
+        self.deviceId = deviceId
+    }
+}
+
 public struct CodexLinkDevicePairingResult: Codable, Equatable, Sendable {
     public let relayUrl: String
     public let userId: String
@@ -69,6 +79,25 @@ public struct CodexLinkDevicePairingResult: Codable, Equatable, Sendable {
     }
 }
 
+public struct CodexLinkDeviceRevocationResult: Codable, Equatable, Sendable {
+    public let relayUrl: String
+    public let userId: String
+    public let deviceId: String
+    public let revokedAt: String
+
+    public init(
+        relayUrl: String,
+        userId: String,
+        deviceId: String,
+        revokedAt: String
+    ) {
+        self.relayUrl = relayUrl
+        self.userId = userId
+        self.deviceId = deviceId
+        self.revokedAt = revokedAt
+    }
+}
+
 public enum CodexLinkDeviceSessionClientError: Error, Equatable, Sendable {
     case invalidRelayURL
     case invalidHTTPStatus(Int)
@@ -89,8 +118,15 @@ public protocol CodexLinkDeviceSessionPairing: Sendable {
     ) async throws -> CodexLinkDevicePairingResult
 }
 
+public protocol CodexLinkDeviceSessionRevoking: Sendable {
+    func revokeDevice(
+        userId: String,
+        deviceId: String
+    ) async throws -> CodexLinkDeviceRevocationResult
+}
+
 public typealias CodexLinkDeviceSessionManaging =
-    CodexLinkDeviceSessionRegistering & CodexLinkDeviceSessionPairing
+    CodexLinkDeviceSessionRegistering & CodexLinkDeviceSessionPairing & CodexLinkDeviceSessionRevoking
 
 public protocol CodexLinkDeviceSessionStoring: Sendable {
     func loadDeviceSession() throws -> CodexLinkDeviceSession?
@@ -207,12 +243,39 @@ public final class CodexLinkDeviceSessionClient: @unchecked Sendable {
         return try decoder.decode(CodexLinkDevicePairingResult.self, from: data)
     }
 
+    public func revokeDevice(
+        userId: String,
+        deviceId: String
+    ) async throws -> CodexLinkDeviceRevocationResult {
+        let requestBody = CodexLinkDeviceRevocationRequest(
+            userId: userId,
+            deviceId: deviceId
+        )
+        var request = URLRequest(url: try deviceRevocationURL())
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try encoder.encode(requestBody)
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw CodexLinkDeviceSessionClientError.invalidHTTPStatus(-1)
+        }
+        guard http.statusCode == 200 else {
+            throw CodexLinkDeviceSessionClientError.invalidHTTPStatus(http.statusCode)
+        }
+        return try decoder.decode(CodexLinkDeviceRevocationResult.self, from: data)
+    }
+
     private func deviceSessionURL() throws -> URL {
         try apiURL(path: "/api/device-session")
     }
 
     private func devicePairingURL() throws -> URL {
         try apiURL(path: "/api/device-session/pair")
+    }
+
+    private func deviceRevocationURL() throws -> URL {
+        try apiURL(path: "/api/device-session/revoke")
     }
 
     private func apiURL(path: String) throws -> URL {
@@ -240,3 +303,4 @@ public final class CodexLinkDeviceSessionClient: @unchecked Sendable {
 
 extension CodexLinkDeviceSessionClient: CodexLinkDeviceSessionRegistering {}
 extension CodexLinkDeviceSessionClient: CodexLinkDeviceSessionPairing {}
+extension CodexLinkDeviceSessionClient: CodexLinkDeviceSessionRevoking {}

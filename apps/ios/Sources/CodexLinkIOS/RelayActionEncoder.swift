@@ -21,6 +21,8 @@ public struct CodexLinkRelayActionEncoder: Sendable {
         switch action {
         case .pairHost:
             throw CodexLinkRelayActionEncodingError.localOnlyAction("pairHost")
+        case .revokeDeviceSession:
+            throw CodexLinkRelayActionEncodingError.localOnlyAction("revokeDeviceSession")
         case .selectHost(let hostId):
             return try encoder.encode(ClientSubscribeHostMessage(
                 hostId: hostId,

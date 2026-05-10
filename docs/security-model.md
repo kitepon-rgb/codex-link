@@ -70,7 +70,9 @@ Host インストーラは設定を自動化してよいですが、未認証の
 
 MVP の iPhone pairing は placeholder 実装です。Host が認証済み WebSocket 接続から短命かつ一回限りの pairing code を発行し、iPhone の placeholder device session がその code を redeem した場合だけ、対象 Host への `operator` HostAccess を付与します。Host ID を知っているだけでは pairing できません。
 
-この pairing は本物の multi-user authentication、device revocation、ACL sharing の代替ではありません。それらは hardening phase で完成させます。
+MVP の device revocation も placeholder 実装です。Relay は revoke 済み device の新規接続、pairing、既存 WebSocket session からの message を拒否し、active session を切断します。ただし revoke API 自体はまだ本物の user authentication で保護されていません。
+
+この pairing / revocation は本物の multi-user authentication、device credential、ACL sharing の代替ではありません。それらは hardening phase で完成させます。
 
 ## Relay が保存してよいもの
 
@@ -78,7 +80,7 @@ MVP の iPhone pairing は placeholder 実装です。Host が認証済み WebSo
 - Host メタデータ
 - Host のオンライン状態
 - アクセス制御レコード
-- 最小限の監査メタデータ
+- 最小限の監査メタデータ。Host routing、HostAccess grant / denial、pairing、device registration / revocation の事実だけを記録し、pairing code 本体や Codex payload は記録しない。
 - 再接続用の短いイベントキャッシュ
 
 ## Relay が保存してはいけないもの

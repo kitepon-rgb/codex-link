@@ -281,6 +281,59 @@ describe("Relay WebSocket gateway", () => {
     });
   });
 
+  it("revokes placeholder iPhone sessions and disconnects active Relay sockets", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+    });
+    const baseUrl = await startRelay(relay, servers);
+    const httpBaseUrl = baseUrl.replace("ws://", "http://");
+
+    const deviceResponse = await fetch(`${httpBaseUrl}/api/device-session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        displayName: "owner",
+        deviceName: "Owner iPhone",
+      }),
+    });
+    const device = (await deviceResponse.json()) as { userId: string; deviceId: string };
+    const clientSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=client&deviceId=${device.deviceId}&userId=${device.userId}`,
+    );
+    await clientSocket.read();
+
+    const revokeResponse = await fetch(`${httpBaseUrl}/api/device-session/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: device.userId,
+        deviceId: device.deviceId,
+      }),
+    });
+
+    expect(revokeResponse.status).toBe(200);
+    await expect(revokeResponse.json()).resolves.toMatchObject({
+      userId: device.userId,
+      deviceId: device.deviceId,
+    });
+    expect(await clientSocket.read()).toEqual({
+      type: "relay.error",
+      code: "HOST_ACCESS_DENIED",
+      message: "Revoked device cannot connect",
+    });
+
+    const rejectedSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=client&deviceId=${device.deviceId}&userId=${device.userId}`,
+    );
+    expect(await rejectedSocket.read()).toEqual({
+      type: "relay.error",
+      code: "HOST_ACCESS_DENIED",
+      message: "Revoked device cannot connect",
+    });
+  });
+
   it("pairs a placeholder iPhone device session to a Host with a Host-generated code", async () => {
     const relay = new RelayService(undefined, {
       publicBaseUrl: "http://relay.test",

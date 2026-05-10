@@ -245,8 +245,12 @@ docs/
 
 - [ ] 本物の authentication。
 - [ ] device revocation。
+  - [x] MVP placeholder device session の revoke API を作り、revoked device の新規接続、pairing、既存 WebSocket message を Relay で拒否する。
+  - [ ] 本物の authentication / device credential と結びついた production revocation。
 - [ ] Host sharing / ACL。
 - [ ] audit metadata。
+  - [x] Relay 内で Host routing、HostAccess grant / denial、pairing、device registration / revocation の最小 audit metadata を記録する。
+  - [ ] production storage / retention / search policy。
 - [ ] rate limits。
 - [ ] relay payloads の privacy model 決定。
 

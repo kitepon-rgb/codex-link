@@ -68,6 +68,7 @@ export type RelayServerMessage =
 interface HostSession {
   role: "host";
   socket: WebSocket;
+  deviceId: DeviceId;
   hostId: HostId;
   connectionId: ConnectionId;
 }
@@ -75,6 +76,7 @@ interface HostSession {
 interface ClientSession {
   role: "client";
   socket: WebSocket;
+  deviceId: DeviceId;
   userId: UserId;
   connectionId: ConnectionId;
   subscriptions: Set<HostId>;
@@ -122,6 +124,20 @@ export class RelayWebSocketGateway {
     });
   }
 
+  disconnectDeviceSessions(deviceId: DeviceId): void {
+    for (const [socket, session] of this.sessions) {
+      if (session.deviceId !== deviceId) {
+        continue;
+      }
+      this.send(socket, {
+        type: "relay.error",
+        code: "HOST_ACCESS_DENIED",
+        message: "Revoked device cannot connect",
+      });
+      socket.close();
+    }
+  }
+
   private async handleConnection(socket: WebSocket, requestUrl: string): Promise<void> {
     const url = new URL(requestUrl, "ws://relay.local");
     const kind = url.searchParams.get("kind");
@@ -144,6 +160,7 @@ export class RelayWebSocketGateway {
     const session: HostSession = {
       role: "host",
       socket,
+      deviceId,
       hostId,
       connectionId: connection.id,
     };
@@ -181,6 +198,7 @@ export class RelayWebSocketGateway {
     const session: ClientSession = {
       role: "client",
       socket,
+      deviceId,
       userId,
       connectionId: connection.id,
       subscriptions: new Set(),
@@ -204,6 +222,7 @@ export class RelayWebSocketGateway {
   }
 
   private handleClientMessage(session: ClientSession, raw: string): void {
+    this.relay.assertActiveDevice(session.deviceId);
     const message = parseClientMessage(raw);
     if (message.type === "client.subscribeHost") {
       this.relay.assertHostAccess(session.userId, message.hostId);
@@ -235,6 +254,7 @@ export class RelayWebSocketGateway {
   }
 
   private handleHostMessage(session: HostSession, raw: string): void {
+    this.relay.assertActiveDevice(session.deviceId);
     const message = parseClientMessage(raw);
     if (message.type === "host.event") {
       const cached = this.relay.appendHostEvent(session.hostId, message.event);
@@ -297,12 +317,13 @@ export interface RelayHttpServer {
 }
 
 export function createRelayHttpServer(relay: RelayService): RelayHttpServer {
+  let gateway: RelayWebSocketGateway | null = null;
   const httpServer = createServer((request, response) => {
-    handleHttpRequest(relay, request, response).catch((error: unknown) => {
+    handleHttpRequest(relay, gateway, request, response).catch((error: unknown) => {
       writeJson(response, statusForError(error), normalizeError(error));
     });
   });
-  const gateway = new RelayWebSocketGateway(relay, httpServer);
+  gateway = new RelayWebSocketGateway(relay, httpServer);
   return { httpServer, gateway };
 }
 
@@ -327,8 +348,14 @@ interface DeviceSessionPairRequest {
   pairingCode?: unknown;
 }
 
+interface DeviceSessionRevokeRequest {
+  userId?: unknown;
+  deviceId?: unknown;
+}
+
 async function handleHttpRequest(
   relay: RelayService,
+  gateway: RelayWebSocketGateway | null,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -360,6 +387,21 @@ async function handleHttpRequest(
       hostId: grant.host.id,
       hostName: grant.host.name,
       role: grant.access.role,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/device-session/revoke") {
+    const body = (await readJson(request)) as DeviceSessionRevokeRequest;
+    const userId = requiredString(body.userId, "userId") as UserId;
+    const deviceId = requiredString(body.deviceId, "deviceId") as DeviceId;
+    const revocation = relay.revokeDevice({ userId, deviceId });
+    gateway?.disconnectDeviceSessions(deviceId);
+    writeJson(response, 200, {
+      relayUrl: relay.getPublicBaseUrl(),
+      userId: revocation.user.id,
+      deviceId: revocation.device.id,
+      revokedAt: revocation.device.revokedAt,
     });
     return;
   }

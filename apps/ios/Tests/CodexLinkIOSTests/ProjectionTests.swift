@@ -71,6 +71,36 @@ final class ProjectionTests: XCTestCase {
         )
     }
 
+    func testEncodesDeviceRevocationRequestAndDecodesResult() throws {
+        let data = try JSONEncoder().encode(CodexLinkDeviceRevocationRequest(
+            userId: "usr_1",
+            deviceId: "dev_1"
+        ))
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        XCTAssertEqual(object?["userId"] as? String, "usr_1")
+        XCTAssertEqual(object?["deviceId"] as? String, "dev_1")
+
+        let response = """
+        {
+          "relayUrl": "http://relay.test",
+          "userId": "usr_1",
+          "deviceId": "dev_1",
+          "revokedAt": "2026-05-10T00:00:00.000Z"
+        }
+        """.data(using: .utf8)!
+
+        XCTAssertEqual(
+            try JSONDecoder().decode(CodexLinkDeviceRevocationResult.self, from: response),
+            CodexLinkDeviceRevocationResult(
+                relayUrl: "http://relay.test",
+                userId: "usr_1",
+                deviceId: "dev_1",
+                revokedAt: "2026-05-10T00:00:00.000Z"
+            )
+        )
+    }
+
     func testUserDefaultsDeviceSessionStorePersistsSession() throws {
         let suiteName = "CodexLinkDeviceSessionStoreTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -452,6 +482,20 @@ final class ProjectionTests: XCTestCase {
         }
     }
 
+    func testActionEncoderTreatsDeviceRevocationAsLocalOnly() throws {
+        let encoder = CodexLinkRelayActionEncoder()
+
+        XCTAssertThrowsError(try encoder.encode(
+            .revokeDeviceSession,
+            currentHostId: nil
+        )) { error in
+            XCTAssertEqual(
+                error as? CodexLinkRelayActionEncodingError,
+                .localOnlyAction("revokeDeviceSession")
+            )
+        }
+    }
+
     func testRestoresPreviousSelectionWhenProjectedEntitiesExist() {
         var projection = CodexLinkProjection()
         projection.apply(.hostOnline(Host(
@@ -736,6 +780,70 @@ final class ProjectionTests: XCTestCase {
 
         model.stop()
     }
+
+    @MainActor
+    func testAppViewModelRevokesDeviceSessionAndClearsLocalState() async throws {
+        let deviceSession = CodexLinkDeviceSession(
+            relayUrl: "http://relay.test",
+            userId: "usr_1",
+            deviceId: "dev_1",
+            displayName: "owner",
+            deviceName: "Owner iPhone"
+        )
+        let deviceClient = MockDeviceSessionClient(
+            result: deviceSession,
+            revocationResult: CodexLinkDeviceRevocationResult(
+                relayUrl: "http://relay.test",
+                userId: "usr_1",
+                deviceId: "dev_1",
+                revokedAt: "2026-05-10T00:00:00.000Z"
+            )
+        )
+        let deviceStore = InMemoryDeviceSessionStore(deviceSession: deviceSession)
+        let bookmarkStore = InMemoryBookmarkStore(bookmark: CodexLinkSessionBookmark(
+            hostId: "host_1",
+            projectId: "project_1",
+            threadId: "thread_1",
+            activeTurnId: "turn_1",
+            lastRelaySequence: 8
+        ))
+        let relayClient = MockAppRelayClient(messages: [
+            .ready(role: "client", connectionId: "conn_1"),
+        ])
+        let model = CodexLinkAppViewModel(
+            configuration: CodexLinkAppRuntimeConfiguration(
+                relayURL: URL(string: "http://relay.test")!,
+                displayName: "owner",
+                deviceName: "Owner iPhone"
+            ),
+            selection: CodexLinkSessionSelection(
+                hostId: "host_1",
+                projectId: "project_1",
+                threadId: "thread_1",
+                activeTurnId: "turn_1"
+            ),
+            deviceSessionStore: deviceStore,
+            bookmarkStore: bookmarkStore,
+            deviceSessionClient: deviceClient,
+            relayClientFactory: { _ in relayClient }
+        )
+
+        model.start()
+        try await waitUntil {
+            relayClient.didConnect
+        }
+        model.handle(.revokeDeviceSession)
+        try await waitUntil {
+            deviceClient.revokedDeviceId == "dev_1" && model.deviceSession == nil
+        }
+
+        XCTAssertEqual(deviceClient.revokedUserId, "usr_1")
+        XCTAssertTrue(relayClient.didDisconnect)
+        XCTAssertNil(deviceStore.deviceSession)
+        XCTAssertNil(bookmarkStore.bookmark)
+        XCTAssertEqual(model.selection, CodexLinkSessionSelection())
+        XCTAssertEqual(model.connectionState, .disconnected)
+    }
 }
 
 private func projectionWithActiveTurn(status: TurnStatus) -> CodexLinkProjection {
@@ -839,15 +947,20 @@ private final class InMemoryDeviceSessionStore: CodexLinkDeviceSessionStoring, @
 private final class MockDeviceSessionClient: CodexLinkDeviceSessionManaging, @unchecked Sendable {
     let result: CodexLinkDeviceSession
     let pairingResult: CodexLinkDevicePairingResult?
+    let revocationResult: CodexLinkDeviceRevocationResult?
     var registerCallCount = 0
     var pairingCode: String?
+    var revokedUserId: String?
+    var revokedDeviceId: String?
 
     init(
         result: CodexLinkDeviceSession,
-        pairingResult: CodexLinkDevicePairingResult? = nil
+        pairingResult: CodexLinkDevicePairingResult? = nil,
+        revocationResult: CodexLinkDeviceRevocationResult? = nil
     ) {
         self.result = result
         self.pairingResult = pairingResult
+        self.revocationResult = revocationResult
     }
 
     func registerPlaceholderDevice(
@@ -874,6 +987,23 @@ private final class MockDeviceSessionClient: CodexLinkDeviceSessionManaging, @un
             hostId: "host_1",
             hostName: "MacBook",
             role: "operator"
+        )
+    }
+
+    func revokeDevice(
+        userId: String,
+        deviceId: String
+    ) async throws -> CodexLinkDeviceRevocationResult {
+        revokedUserId = userId
+        revokedDeviceId = deviceId
+        if let revocationResult {
+            return revocationResult
+        }
+        return CodexLinkDeviceRevocationResult(
+            relayUrl: result.relayUrl,
+            userId: userId,
+            deviceId: deviceId,
+            revokedAt: "2026-05-10T00:00:00.000Z"
         )
     }
 }

@@ -26,6 +26,19 @@ export interface HostPairingCode {
   consumedAt: string | null;
 }
 
+export type RelayAuditOutcome = "success" | "denied" | "failed";
+
+export interface RelayAuditEvent {
+  sequence: number;
+  action: string;
+  outcome: RelayAuditOutcome;
+  occurredAt: string;
+  userId?: UserId;
+  deviceId?: DeviceId;
+  hostId?: HostId;
+  detail?: Record<string, string | number | boolean | null>;
+}
+
 export interface RelayState {
   users: Map<UserId, User>;
   devices: Map<DeviceId, Device>;
@@ -35,7 +48,9 @@ export interface RelayState {
   eventCache: Map<HostId, CachedRelayEvent[]>;
   eventCacheDroppedThrough: Map<HostId, number>;
   hostPairingCodes: Map<string, HostPairingCode>;
+  auditEvents: RelayAuditEvent[];
   nextEventSequence: number;
+  nextAuditSequence: number;
 }
 
 export function createRelayState(): RelayState {
@@ -48,6 +63,8 @@ export function createRelayState(): RelayState {
     eventCache: new Map(),
     eventCacheDroppedThrough: new Map(),
     hostPairingCodes: new Map(),
+    auditEvents: [],
     nextEventSequence: 1,
+    nextAuditSequence: 1,
   };
 }
