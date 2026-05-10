@@ -89,6 +89,14 @@ pnpm --filter @codex-link/mac-host start -- ~/.codex-link/host.json
 
 iOS Simulator の dev app は `http://127.0.0.1:3000` を向いています。Host が表示する pairing code を iPhone app の `Pair Host` に入力すると、Relay 経由で Host へ command が流れます。
 
+MVP の Relay / Host / pairing / client subscribe をまとめて確認する場合:
+
+```bash
+node scripts/mvp-local-smoke.mjs
+```
+
+この smoke は既定では Codex turn を開始しません。Codex app-server まで含めて実 turn の開始を確認する場合は `--turn` を付けます。
+
 ## 基本決定
 
 - iPhone app は SSH クライアントにしない。
