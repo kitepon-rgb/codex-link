@@ -7,6 +7,7 @@
 ## 参照元
 
 確認日: 2026-05-10
+再確認: 2026-05-11
 スナップショット更新確認: 2026-05-10T10:37Z
 
 - Codex Remote connections
@@ -182,11 +183,12 @@ Codex Link での意味:
 - remote-control は SQLite state DB、ChatGPT auth、`chatgpt_base_url` から導出される remote-control endpoint を必要とする。
 - default endpoint は `https://chatgpt.com/backend-api` から、`/wham/remote/control/server/enroll` と WebSocket URL を作る。
 - この Mac の `codex remote-control` smoke では enrollment が HTTP 404 で失敗した。source 上、401 / 403 は auth recovery 対象だが、404 は通常エラー扱い。
+- 2026-05-11 JST に同じ `codex-cli 0.130.0` / `codex remote-control` を再実行しても、`https://chatgpt.com/backend-api/wham/remote/control/server/enroll` は HTTP 404 のままだった。
 
 解釈:
 
 - 現時点の `codex remote-control` は、OpenAI / ChatGPT 側の一級 remote-control surface に向かう先端機能。
-- ただし、このアカウント・この環境では 2026-05-10 時点で backend enrollment endpoint が使えない。
+- ただし、このアカウント・この環境では 2026-05-11 時点で backend enrollment endpoint が使えない。
 - そのため、Codex Link の MVP 既定経路にはまだ置かない。
 - ただし、正式化されたら Codex Link の理想に非常に近いので、R&D 対象として追跡し続ける。
 

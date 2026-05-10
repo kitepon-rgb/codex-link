@@ -68,6 +68,7 @@ iPhone app
 - `codex features list` では `remote_control` は `under development` で、既定では disabled。
 - OpenAI 公式 PR #21424 によると、`codex remote-control` は `codex --enable remote_control app-server --listen off` 相当の入口。
 - ローカル smoke では ChatGPT remote-control enrollment endpoint が HTTP 404 を返した。
+- 2026-05-11 JST の再 smoke でも同 endpoint は HTTP 404 のままだった。
 - このため、MVP の既定入口は `codex app-server` stdio とし、remote-control は追跡対象にする。
 
 2026-05-10 の schema 生成確認:
