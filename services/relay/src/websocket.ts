@@ -394,7 +394,7 @@ async function handleHttpRequest(
       scope: "http.device_session.create",
       key: requestRateLimitKey(request),
     });
-    const body = (await readJson(request)) as DeviceSessionRequest;
+    const body = (await readJson(request, relay.getMaxHttpBodyBytes())) as DeviceSessionRequest;
     const displayName = requiredString(body.displayName, "displayName");
     const deviceName = requiredString(body.deviceName, "deviceName");
     const session = relay.registerPlaceholderIphoneSession(displayName, deviceName);
@@ -410,7 +410,7 @@ async function handleHttpRequest(
   }
 
   if (request.method === "POST" && request.url === "/api/device-session/pair") {
-    const body = (await readJson(request)) as DeviceSessionPairRequest;
+    const body = (await readJson(request, relay.getMaxHttpBodyBytes())) as DeviceSessionPairRequest;
     const userId = requiredString(body.userId, "userId") as UserId;
     const deviceId = requiredString(body.deviceId, "deviceId") as DeviceId;
     const pairingCode = requiredString(body.pairingCode, "pairingCode");
@@ -432,7 +432,7 @@ async function handleHttpRequest(
   }
 
   if (request.method === "POST" && request.url === "/api/device-session/revoke") {
-    const body = (await readJson(request)) as DeviceSessionRevokeRequest;
+    const body = (await readJson(request, relay.getMaxHttpBodyBytes())) as DeviceSessionRevokeRequest;
     const userId = requiredString(body.userId, "userId") as UserId;
     const deviceId = requiredString(body.deviceId, "deviceId") as DeviceId;
     relay.authenticateUserDevice(userId, deviceId, bearerToken(request.headers.authorization));
@@ -452,7 +452,7 @@ async function handleHttpRequest(
   }
 
   if (request.method === "POST" && request.url === "/api/host-access/grant") {
-    const body = (await readJson(request)) as HostAccessGrantRequest;
+    const body = (await readJson(request, relay.getMaxHttpBodyBytes())) as HostAccessGrantRequest;
     const ownerUserId = requiredString(body.ownerUserId, "ownerUserId") as UserId;
     const ownerDeviceId = requiredString(body.ownerDeviceId, "ownerDeviceId") as DeviceId;
     const hostId = requiredString(body.hostId, "hostId") as HostId;
@@ -479,7 +479,7 @@ async function handleHttpRequest(
   }
 
   if (request.method === "POST" && request.url === "/api/host-access/revoke") {
-    const body = (await readJson(request)) as HostAccessRevokeRequest;
+    const body = (await readJson(request, relay.getMaxHttpBodyBytes())) as HostAccessRevokeRequest;
     const ownerUserId = requiredString(body.ownerUserId, "ownerUserId") as UserId;
     const ownerDeviceId = requiredString(body.ownerDeviceId, "ownerDeviceId") as DeviceId;
     const hostId = requiredString(body.hostId, "hostId") as HostId;
@@ -508,7 +508,7 @@ async function handleHttpRequest(
       scope: "http.host_bootstrap",
       key: requestRateLimitKey(request),
     });
-    const body = (await readJson(request)) as HostBootstrapRequest;
+    const body = (await readJson(request, relay.getMaxHttpBodyBytes())) as HostBootstrapRequest;
     const ownerDisplayName = requiredString(body.ownerDisplayName, "ownerDisplayName");
     const hostName = requiredString(body.hostName, "hostName");
     const project = objectValue(body.project);
@@ -537,12 +537,25 @@ async function handleHttpRequest(
   writeJson(response, 404, { code: "NOT_FOUND", message: "Not found" });
 }
 
-function readJson(request: IncomingMessage): Promise<unknown> {
+function readJson(request: IncomingMessage, maxBodyBytes: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let receivedBytes = 0;
+    let tooLarge = false;
+    request.on("data", (chunk: Buffer) => {
+      receivedBytes += chunk.byteLength;
+      if (receivedBytes > maxBodyBytes) {
+        tooLarge = true;
+        return;
+      }
+      chunks.push(chunk);
+    });
     request.on("error", reject);
     request.on("end", () => {
+      if (tooLarge) {
+        reject(new RelayError("HTTP request body too large", "PAYLOAD_TOO_LARGE"));
+        return;
+      }
       const text = Buffer.concat(chunks).toString("utf8");
       if (!text) {
         resolve({});
@@ -572,6 +585,9 @@ function statusForError(error: unknown): number {
   }
   if (normalized.code === "RATE_LIMITED") {
     return 429;
+  }
+  if (normalized.code === "PAYLOAD_TOO_LARGE") {
+    return 413;
   }
   if (
     normalized.code === "BAD_JSON" ||

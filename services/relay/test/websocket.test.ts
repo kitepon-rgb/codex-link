@@ -335,6 +335,32 @@ describe("Relay WebSocket gateway", () => {
     });
   });
 
+  it("rejects oversized HTTP JSON bodies", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      maxHttpBodyBytes: 8,
+    });
+    const baseUrl = await startRelay(relay, servers);
+    const httpBaseUrl = baseUrl.replace("ws://", "http://");
+
+    const response = await fetch(`${httpBaseUrl}/api/device-session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        displayName: "owner",
+        deviceName: "Owner iPhone",
+      }),
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "PAYLOAD_TOO_LARGE",
+      message: "HTTP request body too large",
+    });
+  });
+
   it("rate limits Host pairing code creation over WebSocket", async () => {
     const relay = new RelayService(undefined, {
       publicBaseUrl: "http://relay.test",

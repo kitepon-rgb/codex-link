@@ -5,6 +5,7 @@ export interface RelayConfig {
   rateLimitWindowMs?: number;
   rateLimitMaxRequestsPerWindow?: number;
   auditEventLimit?: number;
+  maxHttpBodyBytes?: number;
 }
 
 export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
@@ -24,5 +25,9 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
       10,
     ),
     auditEventLimit: Number.parseInt(env.CODEX_LINK_AUDIT_EVENT_LIMIT ?? "1000", 10),
+    maxHttpBodyBytes: Number.parseInt(
+      env.CODEX_LINK_MAX_HTTP_BODY_BYTES ?? "65536",
+      10,
+    ),
   };
 }
