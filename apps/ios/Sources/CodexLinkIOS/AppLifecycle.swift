@@ -311,6 +311,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
         case .hostEvent(let cached):
             projection.apply(cached.event)
             lastRelaySequence = max(lastRelaySequence ?? 0, cached.sequence)
+            selectDefaultProjectIfNeeded(for: cached.hostId)
             persistSelection(previousSelection: selection)
         case .hostSubscriptionReady(_, _, let latestSequence):
             lastRelaySequence = max(lastRelaySequence ?? 0, latestSequence)
@@ -323,6 +324,16 @@ public final class CodexLinkAppViewModel: ObservableObject {
         case .hostMessage:
             throw CodexLinkRelayClientError.unsupportedWebSocketMessage
         }
+    }
+
+    private func selectDefaultProjectIfNeeded(for hostId: String) {
+        guard selection.hostId == hostId, selection.projectId == nil else {
+            return
+        }
+        guard let project = projection.projectsByHost[hostId]?.first else {
+            return
+        }
+        selection.projectId = project.id
     }
 
     private func send(_ action: CodexLinkUIAction) async {

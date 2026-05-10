@@ -785,6 +785,7 @@ final class ProjectionTests: XCTestCase {
         let relayClient = MockAppRelayClient(messages: [
             .ready(role: "client", connectionId: "conn_1"),
         ])
+        let bookmarkStore = InMemoryBookmarkStore()
         let model = CodexLinkAppViewModel(
             configuration: CodexLinkAppRuntimeConfiguration(
                 relayURL: URL(string: "http://relay.test")!,
@@ -792,7 +793,7 @@ final class ProjectionTests: XCTestCase {
                 deviceName: "Owner iPhone"
             ),
             deviceSessionStore: InMemoryDeviceSessionStore(deviceSession: deviceSession),
-            bookmarkStore: InMemoryBookmarkStore(),
+            bookmarkStore: bookmarkStore,
             deviceSessionClient: deviceClient,
             relayClientFactory: { _ in relayClient }
         )
@@ -805,10 +806,28 @@ final class ProjectionTests: XCTestCase {
         try await waitUntil {
             relayClient.sentActions.contains(.selectHost(hostId: "host_1"))
         }
+        relayClient.messages.append(.hostEvent(CachedRelayEvent(
+            sequence: 1,
+            hostId: "host_1",
+            event: .projectListUpdated(
+                hostId: "host_1",
+                projects: [ProjectRef(
+                    id: "project_1",
+                    hostId: "host_1",
+                    name: "Codex Link",
+                    pathLabel: "/repo"
+                )]
+            ),
+            receivedAt: "2026-05-10T00:00:00Z"
+        )))
+        try await waitUntil {
+            model.selection.projectId == "project_1"
+        }
 
         XCTAssertEqual(deviceClient.pairingCode, "ABCD-EF12")
         XCTAssertEqual(deviceClient.pairingDeviceToken, "device_token_1")
         XCTAssertEqual(model.selection.hostId, "host_1")
+        XCTAssertEqual(bookmarkStore.bookmark?.projectId, "project_1")
 
         model.stop()
     }
