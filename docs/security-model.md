@@ -1,112 +1,160 @@
-# Security Model
+# セキュリティモデル
 
-Codex Link Relay may be hosted on a home LAN machine, but if other people can use it, it must be treated as a public multi-tenant service.
+Codex Link Relay は自宅 LAN 上で動かす場合でも、他のユーザーが使えるなら公開されたマルチテナントサービスとして扱います。
 
-Do not rely on LAN trust.
+LAN を信頼の根拠にしないでください。
 
-## Trust boundaries
+設定された Relay ドメインは、複数ユーザー、複数 iPhone、複数 Host が接続する共有ハブです。デバイス登録、Host 一覧取得、メッセージルーティングの前に、すべての接続を認証します。
+
+## 信頼境界
 
 ```text
 iPhone app
-  User-facing mobile client.
+  ユーザーが操作するモバイルクライアント。
 
 Relay
-  Public-facing broker, registry, and routing service.
+  公開される broker / registry / routing service。
 
 Host app
-  User-owned Mac or PC. Owns local Codex integration and local files.
+  ユーザー所有の Mac または PC。
+  ローカル Codex 連携とローカルファイルを管理する。
 
 Codex
-  Local process on the Host machine.
+  Host 上で動くローカルプロセス。
 ```
 
-## Required concepts
+## 必須概念
 
 ```text
 User
-  Account that owns or can access Hosts.
+  Host を所有する、または Host へのアクセス権を持つアカウント。
 
 Device
-  Registered iPhone, Mac Host, or PC Host.
+  登録済みの iPhone、Mac Host、PC Host。
 
 Host
-  A local computer available for Codex work.
+  Codex 作業に使えるローカル端末。
 
 HostAccess
-  Explicit permission for a User to see or operate a Host.
+  User が Host を見たり操作したりするための明示的な権限。
 
 Connection
-  A live Host or iPhone connection to the Relay.
+  Relay に接続中の Host または iPhone。
 ```
 
-## Authorization rule
+## 認可ルール
 
-Never return a global Host list.
+グローバルな Host 一覧を返してはいけません。
 
-The iPhone app may only see Hosts that belong to the current user or were explicitly shared with that user.
+iPhone app が見られるのは、現在のユーザーが所有している Host、または明示的に共有された Host だけです。
 
-Every routed message must check that the current user can access the selected Host.
-A Host identifier alone is not authorization.
+Host へのすべてのルーティングで、現在のユーザーが選択された Host にアクセスできるか確認します。
 
-## Authentication rule
+Host ID を知っていることは、認可ではありません。
 
-Single shared API tokens are not acceptable for multi-user use.
+## 認証ルール
 
-Required properties:
+マルチユーザー利用で、単一の共有 API トークンは使いません。
 
-- user login
-- per-device registration
-- revocable device credentials
-- short-lived app sessions
-- Host ownership checks
-- route authorization checks
+必須の性質:
 
-## Relay responsibilities
+- ユーザーログイン
+- デバイスごとの登録
+- 一発 Host セットアップのためのペアリングまたはログインフロー
+- 取り消し可能なデバイス認証情報
+- 短命なアプリセッション
+- Host 所有権チェック
+- ルートごとの認可チェック
 
-The Relay may store:
+Host インストーラは設定を自動化してよいですが、未認証の Host を作ってはいけません。一発インストールの結果は、認証済みで、ユーザー所有で、取り消し可能なデバイス登録である必要があります。
 
-- user and device metadata
-- Host metadata
-- Host online state
-- access-control records
-- minimal audit metadata
-- optional short event cache for reconnect
+## Relay が保存してよいもの
 
-The Relay should not store:
+- ユーザーとデバイスのメタデータ
+- Host メタデータ
+- Host のオンライン状態
+- アクセス制御レコード
+- 最小限の監査メタデータ
+- 再接続用の短いイベントキャッシュ
 
-- project folders
-- local Codex auth state
-- SSH credentials
-- local filesystem data
-- Codex session source of truth
-- long raw logs unless explicitly designed
+## Relay が保存してはいけないもの
 
-## Relay privacy model
+- プロジェクトフォルダ
+- ローカル Codex の認証状態
+- SSH 認証情報
+- ローカルファイルシステムの内容
+- Codex セッションの正本
+- 明示的に設計していない長い raw log
 
-MVP may use a broker-readable relay for implementation speed.
-If so, the product must say that clearly.
+## Relay のプライバシーモデル
 
-Long-term, encrypted routing between iPhone app and Host app can be considered so that the Relay only sees routing metadata.
+MVP では、実装速度のために broker-readable relay を採用してもよいです。
 
-Do not claim end-to-end privacy unless that design is actually implemented.
+その場合、Relay が中継内容を読める設計であることを明確に説明します。
 
-## Host isolation
+長期的には、iPhone app と Host app の間の暗号化ルーティングを検討できます。その場合、Relay はルーティングメタデータだけを見る形に近づけます。
 
-Local side effects happen on the selected Host.
-The Relay does not execute local commands and does not access local project folders.
+実装していない限り、エンドツーエンドプライバシーを主張してはいけません。
 
-The Host app owns:
+## Host の分離
 
-- local Codex integration
-- local project access
-- local approvals
-- local execution boundaries
-- local capability reporting
+ローカル副作用は、選択された Host 上で発生します。
 
-## Non-goals
+Relay はローカルコマンドを実行せず、ローカルプロジェクトフォルダにもアクセスしません。
 
-- showing another user's Hosts
-- using one shared token for all users
-- making the iPhone app an SSH client
-- making the Relay a Codex execution server
-- making the Relay the source of truth for Codex context
+Host app が所有するもの:
+
+- ローカル Codex 連携
+- ローカルプロジェクトアクセス
+- ローカル承認
+- ローカル実行境界
+- ローカル機能の報告
+
+## Codex app-server の公開境界
+
+Host は Codex app-server と同じ端末上で通信します。
+
+MVP の安全な既定:
+
+- app-server stdio transport を第一候補にする。
+- WebSocket を使う場合は `ws://127.0.0.1:<port>` の loopback に閉じる。
+- リモート接続が必要な場合は SSH port forwarding または mesh VPN を使う。
+- non-loopback WebSocket を使う場合は app-server の WebSocket auth を必須にする。
+- `--ws-token-file` のような secret-on-disk 方式を優先し、raw token を command line に載せない。
+- Relay は app-server WebSocket をそのまま public tunnel しない。
+
+禁止:
+
+- unauthenticated app-server listener を LAN / Internet に公開する。
+- Relay に Codex auth token、SSH key、`~/.codex`、app-server bearer token を保存する。
+- iPhone app に SSH key や Host filesystem access を持たせる。
+
+## 承認境界
+
+Codex の command execution、file change、network、tool user input は、Host が app-server event として受け取り、Codex Link protocol の `ApprovalRequest` に正規化します。
+
+Relay は承認 request / response を中継してよいですが、承認の意味を勝手に変更してはいけません。
+
+必須:
+
+- 承認 request は `threadId`、`turnId`、`itemId` または `requestId` に紐づける。
+- iPhone app は command / cwd / file diff / network destination / requested permissions を表示する。
+- 承認 decision は accept / acceptForSession / decline / cancel など、app-server が要求する decision に対応づける。
+- `serverRequest/resolved` を受けたら、iPhone 側の承認 UI を必ず解決済みにする。
+
+MVP TODO:
+
+- [x] command execution approval の基本表示内容を定義する。`docs/ui-design.md` の Approval UI を参照。
+- [x] file change approval の基本表示内容を定義する。`docs/ui-design.md` の Approval UI を参照。
+- [x] network approval の基本表示内容を定義する。`docs/ui-design.md` の Approval UI を参照。
+- [x] `tool/requestUserInput` の基本表示内容を定義する。`docs/ui-design.md` の Approval UI を参照。
+- [ ] file diff / network destination / requested permissions の詳細表示仕様を詰める。
+- [ ] 承認 request timeout / cancellation の扱いを定義する。
+
+## 非目標
+
+- 他ユーザーの Host を表示すること
+- 全ユーザー共通のトークンを使うこと
+- iPhone app を SSH クライアントにすること
+- Relay を Codex 実行サーバにすること
+- Relay を Codex 文脈の正本にすること

@@ -1,0 +1,10 @@
+.claude/
+.spotter/
+.vscode/
+node_modules/
+**/node_modules/
+.build/
+**/.build/
+.swiftpm/
+**/.swiftpm/
+tmp/

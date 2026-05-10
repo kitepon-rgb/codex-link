@@ -2,21 +2,21 @@
 
 **Connect your iPhone to local Codex.**
 
-Codex Link is an independent companion system for controlling Codex running on your own Mac or PC from an iPhone.
+Codex Link は、ユーザー自身の Mac や PC 上で動いている Codex を、iPhone から操作するための独立した companion system です。
 
-It is not a central Codex execution server. Codex runs locally on each user's computer, where it can access that machine's project folders, shell, Xcode, simulator, browser, VS Code, Docker, and other local tools.
+中央サーバで Codex を実行するプロダクトではありません。Codex は各ユーザーの端末上でローカルに動き、その端末のプロジェクトフォルダ、shell、Xcode、Simulator、browser、VS Code、Docker などを使います。
 
-The central service is only a broker / registry / relay:
+中央の Relay は broker / registry / relay に徹します。
 
-- user authentication
-- device registration
-- host discovery
-- host online/offline state
-- authorized relay between iPhone and local Host apps
+- ユーザー認証
+- デバイス登録
+- Host discovery
+- Host online/offline state
+- iPhone とローカル Host app の認可付き relay
 
-Codex Link is not affiliated with or endorsed by OpenAI.
+Codex Link は OpenAI 公式または OpenAI 公認の製品ではありません。
 
-## Product shape
+## プロダクト構成
 
 ```text
 iPhone app
@@ -30,49 +30,67 @@ iPhone app
           -> local projects / VS Code / browser / Docker
 ```
 
-## Apps
+## ディレクトリ方針
 
 ```text
 apps/ios
-  Native iPhone app.
+  ネイティブ iPhone app。
 
 apps/mac-host
-  macOS Codex Link Host app.
-
-apps/pc-host
-  Windows/Linux Host app later.
+  macOS Codex Link Host app。
 
 services/relay
-  Multi-tenant broker / registry / relay.
+  マルチテナント broker / registry / relay。
 
 packages/protocol
-  iPhone <-> Relay <-> Host protocol.
+  iPhone <-> Relay <-> Host の共有 protocol。
 
 packages/codex-client
-  Host-side Codex app-server / CLI integration.
+  Host 側の Codex app-server / CLI integration。
 ```
 
-## Core decisions
+Windows/Linux Host は将来候補です。MVP が一周動くまでは `apps/pc-host` を作りません。
 
-- iPhone app does not SSH into computers.
-- iPhone app does not read project folders directly.
-- iPhone app does not speak raw Codex app-server JSON-RPC.
-- Local Host apps own Codex integration and local side effects.
-- The Relay is multi-tenant and must never show another user's hosts.
-- The Relay is not the source of truth for Codex context.
-- Durable code state should flow through GitHub: branches, commits, PRs, issues, docs.
+## 開発コマンド
 
-## Documentation
+このリポジトリは TypeScript workspace に `pnpm` を使います。
 
-Start here:
+```bash
+pnpm install
+pnpm typecheck
+pnpm test
+```
+
+Relay だけ確認する場合:
+
+```bash
+pnpm --filter @codex-link/relay typecheck
+pnpm --filter @codex-link/relay test
+```
+
+## 基本決定
+
+- iPhone app は SSH クライアントにしない。
+- iPhone app はプロジェクトフォルダを直接読まない。
+- iPhone app は raw Codex app-server JSON-RPC を直接話さない。
+- Host app が Codex 連携とローカル副作用を所有する。
+- Relay はマルチテナントで、他ユーザーの Host を表示してはいけない。
+- Relay は Codex 文脈の正本にならない。
+- 永続的なコード状態は GitHub を通す。つまり、branch、commit、PR、issue、docs を使う。
+
+## ドキュメント
+
+読む順番:
 
 1. [docs/README.md](docs/README.md)
-2. [docs/product-brief.md](docs/product-brief.md)
+2. [docs/requirements.md](docs/requirements.md)
 3. [docs/architecture.md](docs/architecture.md)
 4. [docs/security-model.md](docs/security-model.md)
 5. [docs/mvp-plan.md](docs/mvp-plan.md)
 
-## App naming
+第三者仕様と外部ドキュメントのスナップショットは [rag/](rag/) に置きます。
+
+## 名前
 
 - App name: **Codex Link**
 - Subtitle: **Connect your iPhone to local Codex**

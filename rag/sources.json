@@ -1,0 +1,121 @@
+{
+  "sources": [
+    {
+      "id": "openai-codex-remote-connections",
+      "title": "OpenAI Codex Remote Connections",
+      "url": "https://developers.openai.com/codex/remote-connections",
+      "output": "rag/third-party/openai-codex-remote-connections.source.md",
+      "reader": "jina",
+      "startAtLine": "# Remote connections"
+    },
+    {
+      "id": "openai-codex-app-server",
+      "title": "OpenAI Codex App Server",
+      "url": "https://developers.openai.com/codex/app-server",
+      "output": "rag/third-party/openai-codex-app-server.source.md",
+      "reader": "jina",
+      "startAtLine": "## Protocol",
+      "prepend": "# App Server\n\n"
+    },
+    {
+      "id": "openai-codex-auth",
+      "title": "OpenAI Codex Authentication",
+      "url": "https://developers.openai.com/codex/auth",
+      "output": "rag/third-party/openai-codex-auth.source.md",
+      "reader": "jina",
+      "startAtLine": "# Authentication"
+    },
+    {
+      "id": "openai-codex-cli-reference",
+      "title": "OpenAI Codex CLI Reference",
+      "url": "https://developers.openai.com/codex/cli/reference",
+      "output": "rag/third-party/openai-codex-cli-reference.source.md",
+      "reader": "jina",
+      "startAtLine": "This page catalogs every documented Codex CLI command and flag. Use the interactive tables to search by key or description. Each section indicates whether the option is stable or experimental and calls out risky combinations.",
+      "prepend": "# Command line options\n\n"
+    },
+    {
+      "id": "openai-codex-config-basics",
+      "title": "OpenAI Codex Config Basics",
+      "url": "https://developers.openai.com/codex/config-basic",
+      "output": "rag/third-party/openai-codex-config-basics.source.md",
+      "reader": "jina",
+      "startAtLine": "# Config basics"
+    },
+    {
+      "id": "openai-codex-config-reference",
+      "title": "OpenAI Codex Config Reference",
+      "url": "https://developers.openai.com/codex/config-reference",
+      "output": "rag/third-party/openai-codex-config-reference.source.md",
+      "reader": "jina",
+      "startAtLine": "# Configuration Reference"
+    },
+    {
+      "id": "openai-codex-app-settings",
+      "title": "OpenAI Codex App Settings",
+      "url": "https://developers.openai.com/codex/app/settings",
+      "output": "rag/third-party/openai-codex-app-settings.source.md",
+      "reader": "jina",
+      "startAtLine": "# Codex app settings"
+    },
+    {
+      "id": "openai-codex-feature-maturity",
+      "title": "OpenAI Codex Feature Maturity",
+      "url": "https://developers.openai.com/codex/feature-maturity",
+      "output": "rag/third-party/openai-codex-feature-maturity.source.md",
+      "reader": "jina",
+      "startAtLine": "# Feature Maturity"
+    },
+    {
+      "id": "openai-codex-changelog",
+      "title": "OpenAI Codex Changelog",
+      "url": "https://developers.openai.com/codex/changelog",
+      "output": "rag/third-party/openai-codex-changelog.source.md",
+      "reader": "jina",
+      "startAtLine": "## May 2026",
+      "prepend": "# Changelog\n\n"
+    },
+    {
+      "id": "anthropic-claude-context-management",
+      "title": "Anthropic Claude Context Management Announcement",
+      "url": "https://claude.com/blog/context-management",
+      "output": "rag/third-party/anthropic-claude-context-management.source.md",
+      "reader": "jina",
+      "startAtLine": "# Managing context on the Claude Developer Platform | Claude"
+    },
+    {
+      "id": "anthropic-claude-context-editing",
+      "title": "Claude Context Editing",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/context-editing",
+      "output": "rag/third-party/anthropic-claude-context-editing.source.md",
+      "reader": "jina",
+      "startAtLine": "# Context editing - Claude API Docs"
+    },
+    {
+      "id": "anthropic-claude-memory-tool",
+      "title": "Claude Memory Tool",
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool",
+      "output": "rag/third-party/anthropic-claude-memory-tool.source.md",
+      "reader": "jina",
+      "startAtLine": "Messages Tools",
+      "prepend": "# Memory tool\n\n"
+    },
+    {
+      "id": "anthropic-claude-context-windows",
+      "title": "Claude Context Windows",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/context-windows",
+      "output": "rag/third-party/anthropic-claude-context-windows.source.md",
+      "reader": "jina",
+      "startAtLine": "# Context windows - Claude API Docs"
+    },
+    {
+      "id": "anthropic-claude-token-efficient-tool-use",
+      "title": "Claude Token-efficient Tool Use Migration",
+      "url": "https://platform.claude.com/docs/en/about-claude/models/migration-guide",
+      "output": "rag/third-party/anthropic-claude-token-efficient-tool-use.source.md",
+      "reader": "jina",
+      "startAtLine": "#### Additional recommended changes",
+      "prepend": "# Token-efficient tool use notes\n\n"
+    }
+  ]
+}

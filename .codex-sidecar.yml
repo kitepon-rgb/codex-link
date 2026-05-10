@@ -1,0 +1,70 @@
+project: codex-link
+
+defaults:
+  readonly: true
+  result_format: json
+  model: gpt-5.5
+  model_reasoning_effort: medium
+
+safety_profile: node-mcp-service
+
+allowed_paths:
+  - AGENTS.md
+  - README.md
+  - docs/
+  - rag/
+  - scripts/
+  - .codex-sidecar.yml
+
+deny_paths:
+  - .env
+  - .env.*
+  - "**/*.key"
+  - "**/*.pem"
+  - "**/*.sqlite"
+  - "**/*.db"
+  - "**/node_modules/**"
+  - "**/.git/**"
+  - "**/.claude/**"
+  - "**/.codex/**"
+  - "**/.spotter/**"
+  - "**/.vscode/**"
+
+presets:
+  review:
+    workflow: review
+    readonly: true
+    prompt: "Review codex-link for regressions, missing tests, security risks, and drift from the iPhone remote-control product goal."
+  explore:
+    workflow: explore
+    readonly: true
+    prompt: "Answer with codebase evidence and file references."
+  opinion:
+    workflow: opinion
+    readonly: true
+    prompt: "Challenge this design and identify hidden assumptions before implementation."
+  risk:
+    workflow: risk-check
+    readonly: true
+    focus:
+      - auth
+      - app-server
+      - remote-control
+      - hooks
+      - local-network
+      - app-store
+  advisory:
+    workflow: explore
+    readonly: true
+    model_reasoning_effort: low
+    prompt: "Give a concise second opinion grounded in this repository."
+  auditor:
+    workflow: auditor
+    readonly: true
+    model_reasoning_effort: low
+    prompt: "Judge whether the host agent missed an important available tool."
+  work:
+    workflow: work
+    readonly: false
+    require_worktree: true
+    prompt: "Implement a small scoped fix within allowed_paths, using an isolated worktree."

@@ -1,0 +1,26 @@
+{
+  "name": "@codex-link/mac-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "codex-link-mac-host": "./src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@codex-link/codex-client": "workspace:*",
+    "@codex-link/protocol": "workspace:*",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@codex-link/relay": "workspace:*",
+    "@types/ws": "^8.18.1"
+  }
+}
