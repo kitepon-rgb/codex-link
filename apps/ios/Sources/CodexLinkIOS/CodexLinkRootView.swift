@@ -226,6 +226,7 @@ private struct SessionScreen: View {
     @State private var draft = ""
     @State private var showTimeline = false
     @State private var showThreadDrawer = false
+    @State private var showInspector = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -279,7 +280,7 @@ private struct SessionScreen: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    onAction(.showInspector)
+                    showInspector = true
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
@@ -300,6 +301,13 @@ private struct SessionScreen: View {
                 threads: sortedThreads,
                 selection: $selection,
                 onAction: onAction
+            )
+        }
+        .sheet(isPresented: $showInspector) {
+            InspectorView(
+                projection: projection,
+                connectionState: connectionState,
+                selection: selection
             )
         }
     }
@@ -832,5 +840,89 @@ private struct ThreadDrawer: View {
             return threads
         }
         return threads.filter { $0.projectId == projectId }
+    }
+}
+
+@available(iOS 17.0, macOS 14.0, *)
+private struct InspectorView: View {
+    let projection: CodexLinkProjection
+    let connectionState: CodexLinkConnectionState
+    let selection: CodexLinkSessionSelection
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Connection") {
+                    LabeledContent("State", value: connectionState.rawValue)
+                    if let host = selectedHost {
+                        LabeledContent("Host", value: host.name)
+                        LabeledContent("Host status", value: host.status.rawValue)
+                    }
+                    if let latestError = projection.latestError {
+                        Text(latestError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Section("Selection") {
+                    InspectorValueRow(label: "Host", value: selection.hostId)
+                    InspectorValueRow(label: "Project", value: selection.projectId)
+                    InspectorValueRow(label: "Thread", value: selection.threadId)
+                    InspectorValueRow(label: "Turn", value: selection.activeTurnId)
+                }
+
+                Section("Diagnostics") {
+                    if projection.diagnostics.isEmpty {
+                        Text("None")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(projection.diagnostics) { diagnostic in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(diagnostic.severity.rawValue) · \(diagnostic.scope)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(diagnostic.message)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Inspector")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private var selectedHost: Host? {
+        selection.hostId.flatMap { projection.hosts[$0] }
+    }
+}
+
+@available(iOS 17.0, macOS 14.0, *)
+private struct InspectorValueRow: View {
+    let label: String
+    let value: String?
+
+    var body: some View {
+        LabeledContent(label) {
+            Text(value ?? "None")
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(value == nil ? .secondary : .primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
     }
 }

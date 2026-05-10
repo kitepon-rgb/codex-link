@@ -149,7 +149,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
         case .showHostSwitcher:
             selection = CodexLinkSessionSelection()
         case .showInspector:
-            recordError("Inspector UI is not implemented in CodexLinkApp yet.")
+            break
         case .unsupportedOperation(let reason):
             recordError(reason)
         default:
