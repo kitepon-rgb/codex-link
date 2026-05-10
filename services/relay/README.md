@@ -130,6 +130,35 @@ Relay は Host routing、HostAccess grant / denial、pairing code 発行 / redee
 
 Audit metadata には pairing code 本体、client.toHost payload、Codex transcript、project folder 内容は保存しません。
 
+## HostAccess Sharing API
+
+MVP placeholder では、Host owner として登録された user だけが HostAccess を grant / revoke できます。これはまだ production authentication ではなく、request body の `ownerUserId` を Relay が既存 HostAccess と照合する段階です。
+
+grant:
+
+```json
+{
+  "ownerUserId": "usr_1",
+  "hostId": "host_1",
+  "targetUserId": "usr_2",
+  "role": "operator"
+}
+```
+
+`role` は `operator` または `viewer` だけです。`owner` は sharing API から付与しません。
+
+revoke:
+
+```json
+{
+  "ownerUserId": "usr_1",
+  "hostId": "host_1",
+  "targetUserId": "usr_2"
+}
+```
+
+owner access は sharing API から revoke できません。
+
 ## コマンド
 
 リポジトリルートで実行します。

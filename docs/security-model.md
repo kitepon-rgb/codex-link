@@ -74,6 +74,8 @@ MVP の device revocation も placeholder 実装です。Relay は revoke 済み
 
 この pairing / revocation は本物の multi-user authentication、device credential、ACL sharing の代替ではありません。それらは hardening phase で完成させます。
 
+MVP の Host sharing / ACL は、既存 HostAccess の owner role を持つ user だけが `operator` または `viewer` を grant / revoke できる段階です。request body の user id と既存 ACL を照合しますが、production authentication や短命 session credential はまだ未完成です。owner access は sharing API から revoke しません。
+
 ## Relay が保存してよいもの
 
 - ユーザーとデバイスのメタデータ

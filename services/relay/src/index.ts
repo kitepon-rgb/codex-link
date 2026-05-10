@@ -9,10 +9,13 @@ export {
 export { RelayService } from "./relay.js";
 export type {
   DeviceRevocation,
+  HostAccessGrant,
+  HostAccessRevocation,
   HostEventReplay,
   HostPairingGrant,
   PlaceholderDeviceSession,
   RoutedHostMessage,
+  ShareableHostAccessRole,
 } from "./relay.js";
 export { createRelayState } from "./state.js";
 export type {

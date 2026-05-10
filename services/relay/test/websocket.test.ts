@@ -399,6 +399,88 @@ describe("Relay WebSocket gateway", () => {
       },
     });
   });
+
+  it("shares and revokes HostAccess through owner-checked HTTP APIs", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const guest = relay.loginPlaceholder("guest");
+    const guestIphone = relay.registerDevice(guest.id, "Guest iPhone", "iphone");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const baseUrl = await startRelay(relay, servers);
+    const httpBaseUrl = baseUrl.replace("ws://", "http://");
+
+    const hostSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=host&deviceId=${mac.id}&hostId=${host.id}`,
+    );
+    await hostSocket.read();
+
+    const grantResponse = await fetch(`${httpBaseUrl}/api/host-access/grant`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ownerUserId: owner.id,
+        hostId: host.id,
+        targetUserId: guest.id,
+        role: "operator",
+      }),
+    });
+    expect(grantResponse.status).toBe(201);
+    await expect(grantResponse.json()).resolves.toMatchObject({
+      hostId: host.id,
+      userId: guest.id,
+      role: "operator",
+    });
+
+    const clientSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=client&deviceId=${guestIphone.id}&userId=${guest.id}`,
+    );
+    await clientSocket.read();
+    clientSocket.send({
+      type: "client.toHost",
+      hostId: host.id,
+      payload: { type: "turn.start", text: "shared" },
+    });
+    expect(await hostSocket.read()).toMatchObject({
+      type: "host.message",
+      message: {
+        userId: guest.id,
+        hostId: host.id,
+        payload: { type: "turn.start", text: "shared" },
+      },
+    });
+
+    const revokeResponse = await fetch(`${httpBaseUrl}/api/host-access/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ownerUserId: owner.id,
+        hostId: host.id,
+        targetUserId: guest.id,
+      }),
+    });
+    expect(revokeResponse.status).toBe(200);
+    await expect(revokeResponse.json()).resolves.toMatchObject({
+      hostId: host.id,
+      userId: guest.id,
+      revokedRole: "operator",
+    });
+
+    clientSocket.send({
+      type: "client.toHost",
+      hostId: host.id,
+      payload: { type: "turn.start", text: "denied" },
+    });
+    expect(await clientSocket.read()).toEqual({
+      type: "relay.error",
+      code: "HOST_ACCESS_DENIED",
+      message: "Host access denied",
+    });
+  });
 });
 
 async function startRelay(

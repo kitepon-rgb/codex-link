@@ -248,6 +248,8 @@ docs/
   - [x] MVP placeholder device session の revoke API を作り、revoked device の新規接続、pairing、既存 WebSocket message を Relay で拒否する。
   - [ ] 本物の authentication / device credential と結びついた production revocation。
 - [ ] Host sharing / ACL。
+  - [x] MVP placeholder として、Host owner role だけが `operator` / `viewer` HostAccess を grant / revoke できる owner-checked API を作る。
+  - [ ] production authentication / device credential と結びついた sharing UI / API。
 - [ ] audit metadata。
   - [x] Relay 内で Host routing、HostAccess grant / denial、pairing、device registration / revocation の最小 audit metadata を記録する。
   - [ ] production storage / retention / search policy。

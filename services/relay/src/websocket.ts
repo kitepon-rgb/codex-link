@@ -353,6 +353,19 @@ interface DeviceSessionRevokeRequest {
   deviceId?: unknown;
 }
 
+interface HostAccessGrantRequest {
+  ownerUserId?: unknown;
+  hostId?: unknown;
+  targetUserId?: unknown;
+  role?: unknown;
+}
+
+interface HostAccessRevokeRequest {
+  ownerUserId?: unknown;
+  hostId?: unknown;
+  targetUserId?: unknown;
+}
+
 async function handleHttpRequest(
   relay: RelayService,
   gateway: RelayWebSocketGateway | null,
@@ -402,6 +415,46 @@ async function handleHttpRequest(
       userId: revocation.user.id,
       deviceId: revocation.device.id,
       revokedAt: revocation.device.revokedAt,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/host-access/grant") {
+    const body = (await readJson(request)) as HostAccessGrantRequest;
+    const ownerUserId = requiredString(body.ownerUserId, "ownerUserId") as UserId;
+    const hostId = requiredString(body.hostId, "hostId") as HostId;
+    const targetUserId = requiredString(body.targetUserId, "targetUserId") as UserId;
+    const role = requiredShareableHostRole(body.role);
+    const grant = relay.grantHostAccessByOwner({
+      ownerUserId,
+      hostId,
+      targetUserId,
+      role,
+    });
+    writeJson(response, 201, {
+      relayUrl: relay.getPublicBaseUrl(),
+      hostId: grant.host.id,
+      userId: grant.targetUser.id,
+      role: grant.access.role,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/host-access/revoke") {
+    const body = (await readJson(request)) as HostAccessRevokeRequest;
+    const ownerUserId = requiredString(body.ownerUserId, "ownerUserId") as UserId;
+    const hostId = requiredString(body.hostId, "hostId") as HostId;
+    const targetUserId = requiredString(body.targetUserId, "targetUserId") as UserId;
+    const revocation = relay.revokeHostAccessByOwner({
+      ownerUserId,
+      hostId,
+      targetUserId,
+    });
+    writeJson(response, 200, {
+      relayUrl: relay.getPublicBaseUrl(),
+      hostId: revocation.host.id,
+      userId: revocation.targetUser.id,
+      revokedRole: revocation.revokedAccess.role,
     });
     return;
   }
@@ -468,7 +521,11 @@ function statusForError(error: unknown): number {
   if (normalized.code === "NOT_FOUND") {
     return 404;
   }
-  if (normalized.code === "BAD_JSON" || normalized.code === "MISSING_PARAMETER") {
+  if (
+    normalized.code === "BAD_JSON" ||
+    normalized.code === "BAD_HOST_ACCESS_ROLE" ||
+    normalized.code === "MISSING_PARAMETER"
+  ) {
     return 400;
   }
   return 500;
@@ -487,6 +544,14 @@ function requiredString(value: unknown, name: string): string {
     throw new RelayError(`Missing request field: ${name}`, "MISSING_PARAMETER");
   }
   return parsed;
+}
+
+function requiredShareableHostRole(value: unknown): "operator" | "viewer" {
+  const role = requiredString(value, "role");
+  if (role === "operator" || role === "viewer") {
+    return role;
+  }
+  throw new RelayError("HostAccess role must be operator or viewer", "BAD_HOST_ACCESS_ROLE");
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {

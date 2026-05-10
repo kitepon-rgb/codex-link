@@ -25,6 +25,8 @@ import { createRelayState } from "./state.js";
 
 const DEFAULT_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
 
+export type ShareableHostAccessRole = Exclude<HostAccess["role"], "owner">;
+
 export interface RoutedHostMessage {
   hostId: HostId;
   userId: UserId;
@@ -53,6 +55,20 @@ export interface HostPairingGrant {
   device: Device;
   host: Host;
   access: HostAccess;
+}
+
+export interface HostAccessGrant {
+  owner: User;
+  targetUser: User;
+  host: Host;
+  access: HostAccess;
+}
+
+export interface HostAccessRevocation {
+  owner: User;
+  targetUser: User;
+  host: Host;
+  revokedAccess: HostAccess;
 }
 
 export interface DeviceRevocation {
@@ -282,6 +298,64 @@ export class RelayService {
     return access;
   }
 
+  grantHostAccessByOwner(input: {
+    ownerUserId: UserId;
+    hostId: HostId;
+    targetUserId: UserId;
+    role: ShareableHostAccessRole;
+  }): HostAccessGrant {
+    const owner = this.requireUser(input.ownerUserId);
+    const targetUser = this.requireUser(input.targetUserId);
+    const host = this.requireHost(input.hostId);
+    this.assertHostOwner(owner.id, host.id, "host.access.grant.denied");
+    const access = this.grantHostAccess(host.id, targetUser.id, input.role);
+    this.recordAudit({
+      action: "host.access.shared",
+      outcome: "success",
+      userId: owner.id,
+      hostId: host.id,
+      detail: { targetUserId: targetUser.id, role: input.role },
+    });
+    return { owner, targetUser, host, access };
+  }
+
+  revokeHostAccessByOwner(input: {
+    ownerUserId: UserId;
+    hostId: HostId;
+    targetUserId: UserId;
+  }): HostAccessRevocation {
+    const owner = this.requireUser(input.ownerUserId);
+    const targetUser = this.requireUser(input.targetUserId);
+    const host = this.requireHost(input.hostId);
+    this.assertHostOwner(owner.id, host.id, "host.access.revoke.denied");
+    const accessIndex = this.state.hostAccess.findIndex(
+      (access) => access.hostId === host.id && access.userId === targetUser.id,
+    );
+    if (accessIndex === -1) {
+      throw new RelayNotFoundError("HostAccess not found");
+    }
+    const revokedAccess = this.state.hostAccess[accessIndex]!;
+    if (revokedAccess.role === "owner") {
+      this.recordAudit({
+        action: "host.access.revoke.denied",
+        outcome: "denied",
+        userId: owner.id,
+        hostId: host.id,
+        detail: { targetUserId: targetUser.id, reason: "owner_access" },
+      });
+      throw new RelayAuthzError("Host owner access cannot be revoked through sharing");
+    }
+    this.state.hostAccess.splice(accessIndex, 1);
+    this.recordAudit({
+      action: "host.access.revoked",
+      outcome: "success",
+      userId: owner.id,
+      hostId: host.id,
+      detail: { targetUserId: targetUser.id, role: revokedAccess.role },
+    });
+    return { owner, targetUser, host, revokedAccess };
+  }
+
   listHostsForUser(userId: UserId): Host[] {
     this.requireUser(userId);
     const allowedHostIds = new Set(
@@ -419,6 +493,21 @@ export class RelayService {
         hostId,
       });
       throw new RelayAuthzError();
+    }
+    return access;
+  }
+
+  private assertHostOwner(userId: UserId, hostId: HostId, deniedAction: string): HostAccess {
+    const access = this.assertHostAccess(userId, hostId);
+    if (access.role !== "owner") {
+      this.recordAudit({
+        action: deniedAction,
+        outcome: "denied",
+        userId,
+        hostId,
+        detail: { role: access.role },
+      });
+      throw new RelayAuthzError("Host owner access is required");
     }
     return access;
   }

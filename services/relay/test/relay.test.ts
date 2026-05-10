@@ -55,6 +55,108 @@ describe("RelayService", () => {
     });
   });
 
+  it("allows Host owners to share and revoke non-owner HostAccess", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const teammate = relay.loginPlaceholder("teammate");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+
+    const grant = relay.grantHostAccessByOwner({
+      ownerUserId: owner.id,
+      hostId: host.id,
+      targetUserId: teammate.id,
+      role: "viewer",
+    });
+
+    expect(grant.access).toEqual({
+      hostId: host.id,
+      userId: teammate.id,
+      role: "viewer",
+    });
+    expect(relay.listHostsForUser(teammate.id)).toEqual([host]);
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "host.access.shared",
+        outcome: "success",
+        userId: owner.id,
+        hostId: host.id,
+        detail: { targetUserId: teammate.id, role: "viewer" },
+      }),
+    );
+
+    const revocation = relay.revokeHostAccessByOwner({
+      ownerUserId: owner.id,
+      hostId: host.id,
+      targetUserId: teammate.id,
+    });
+
+    expect(revocation.revokedAccess.role).toBe("viewer");
+    expect(relay.listHostsForUser(teammate.id)).toEqual([]);
+    expect(() => relay.routeToHost(teammate.id, host.id, { type: "turn.start" })).toThrow(
+      RelayAuthzError,
+    );
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "host.access.revoked",
+        outcome: "success",
+        userId: owner.id,
+        hostId: host.id,
+        detail: { targetUserId: teammate.id, role: "viewer" },
+      }),
+    );
+  });
+
+  it("rejects HostAccess sharing from non-owners and owner revocation", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const operator = relay.loginPlaceholder("operator");
+    const teammate = relay.loginPlaceholder("teammate");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    relay.grantHostAccessByOwner({
+      ownerUserId: owner.id,
+      hostId: host.id,
+      targetUserId: operator.id,
+      role: "operator",
+    });
+
+    expect(() =>
+      relay.grantHostAccessByOwner({
+        ownerUserId: operator.id,
+        hostId: host.id,
+        targetUserId: teammate.id,
+        role: "viewer",
+      }),
+    ).toThrow("Host owner access is required");
+    expect(() =>
+      relay.revokeHostAccessByOwner({
+        ownerUserId: owner.id,
+        hostId: host.id,
+        targetUserId: owner.id,
+      }),
+    ).toThrow("Host owner access cannot be revoked");
+    expect(relay.listHostsForUser(owner.id)).toEqual([host]);
+    expect(relay.listAuditEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "host.access.grant.denied",
+          outcome: "denied",
+          userId: operator.id,
+          hostId: host.id,
+          detail: { role: "operator" },
+        }),
+        expect.objectContaining({
+          action: "host.access.revoke.denied",
+          outcome: "denied",
+          userId: owner.id,
+          hostId: host.id,
+          detail: { targetUserId: owner.id, reason: "owner_access" },
+        }),
+      ]),
+    );
+  });
+
   it("grants HostAccess by redeeming a one-time Host pairing code", () => {
     const relay = new RelayService();
     const owner = relay.loginPlaceholder("owner");
