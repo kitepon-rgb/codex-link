@@ -18,7 +18,10 @@ export interface MacHostPairingCode {
 export class MacHostRelayClient {
   private socket: WebSocket | null = null;
   private readonly WebSocketImpl: typeof WebSocket;
-  private pairingCodeResolver: ((pairingCode: MacHostPairingCode) => void) | null = null;
+  private pairingCodeRequest: {
+    resolve: (pairingCode: MacHostPairingCode) => void;
+    reject: (error: Error) => void;
+  } | null = null;
 
   constructor(private readonly options: MacHostRelayClientOptions) {
     this.WebSocketImpl = options.WebSocketImpl ?? WebSocket;
@@ -34,6 +37,12 @@ export class MacHostRelayClient {
     return new Promise((resolve, reject) => {
       socket.once("open", () => {
         socket.on("message", (raw) => this.handleRelayMessage(raw.toString()));
+        socket.on("error", (error) => {
+          this.rejectPairingCodeRequest(error);
+        });
+        socket.on("close", () => {
+          this.rejectPairingCodeRequest(new Error("Relay WebSocket closed"));
+        });
         resolve();
       });
       socket.once("error", reject);
@@ -79,12 +88,12 @@ export class MacHostRelayClient {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       throw new Error("Relay WebSocket is not open");
     }
-    if (this.pairingCodeResolver) {
+    if (this.pairingCodeRequest) {
       throw new Error("Host pairing code request is already in flight");
     }
     this.socket.send(JSON.stringify({ type: "host.pairingCode.create" }));
-    return new Promise((resolve) => {
-      this.pairingCodeResolver = resolve;
+    return new Promise((resolve, reject) => {
+      this.pairingCodeRequest = { resolve, reject };
     });
   }
 
@@ -120,11 +129,24 @@ export class MacHostRelayClient {
       message.type === "host.pairingCode.created"
     ) {
       const pairingCode = pairingCodeMessage(message);
-      const resolve = this.pairingCodeResolver;
-      this.pairingCodeResolver = null;
       if (pairingCode) {
-        resolve?.(pairingCode);
+        this.resolvePairingCodeRequest(pairingCode);
       }
+      return;
+    }
+    if (
+      message &&
+      typeof message === "object" &&
+      "type" in message &&
+      message.type === "relay.error" &&
+      "code" in message &&
+      "message" in message &&
+      typeof message.code === "string" &&
+      typeof message.message === "string"
+    ) {
+      this.rejectPairingCodeRequest(
+        new Error(`Relay error ${message.code}: ${message.message}`),
+      );
       return;
     }
     if (
@@ -137,6 +159,18 @@ export class MacHostRelayClient {
       const routed = message.message as { payload?: unknown };
       this.options.onHostMessage?.(routed.payload);
     }
+  }
+
+  private resolvePairingCodeRequest(pairingCode: MacHostPairingCode): void {
+    const request = this.pairingCodeRequest;
+    this.pairingCodeRequest = null;
+    request?.resolve(pairingCode);
+  }
+
+  private rejectPairingCodeRequest(error: Error): void {
+    const request = this.pairingCodeRequest;
+    this.pairingCodeRequest = null;
+    request?.reject(error);
   }
 }
 

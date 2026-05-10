@@ -104,6 +104,42 @@ describe("MacHostRelayClient", () => {
 
     hostClient.close();
   });
+
+  it("rejects pairing code requests when Relay returns an error", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      rateLimitWindowMs: 60_000,
+      rateLimitMaxRequestsPerWindow: 1,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const macToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: mac.id }).token;
+    const relayUrl = await startRelay(relay, servers);
+    const hostClient = new MacHostRelayClient({
+      config: {
+        relayUrl,
+        userId: owner.id,
+        deviceId: mac.id,
+        deviceToken: macToken,
+        hostId: host.id,
+        hostName: "Owner MacBook",
+        projects: [{ id: "project_1" as never, name: "Codex Link", path: process.cwd() }],
+      } satisfies MacHostConfig,
+    });
+
+    await hostClient.connect();
+    await expect(hostClient.createPairingCode()).resolves.toMatchObject({
+      hostId: host.id,
+    });
+    await expect(hostClient.createPairingCode()).rejects.toThrow(
+      "Relay error RATE_LIMITED: Rate limit exceeded",
+    );
+
+    hostClient.close();
+  });
 });
 
 async function startRelay(
