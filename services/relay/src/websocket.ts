@@ -142,6 +142,24 @@ export class RelayWebSocketGateway {
     }
   }
 
+  disconnectHostAccessSessions(userId: UserId, hostId: HostId): void {
+    for (const session of this.sessions.values()) {
+      if (
+        session.role !== "client" ||
+        session.userId !== userId ||
+        !session.subscriptions.has(hostId)
+      ) {
+        continue;
+      }
+      session.subscriptions.delete(hostId);
+      this.send(session.socket, {
+        type: "relay.error",
+        code: "HOST_ACCESS_DENIED",
+        message: "HostAccess was revoked",
+      });
+    }
+  }
+
   private async handleConnection(socket: WebSocket, request: IncomingMessage): Promise<void> {
     const requestUrl = request.url ?? "";
     const url = new URL(requestUrl, "ws://relay.local");
@@ -529,6 +547,7 @@ async function handleHttpRequest(
       hostId,
       targetUserId,
     });
+    gateway?.disconnectHostAccessSessions(targetUserId, hostId);
     writeJson(response, 200, {
       relayUrl: relay.getPublicBaseUrl(),
       hostId: revocation.host.id,

@@ -621,6 +621,18 @@ describe("Relay WebSocket gateway", () => {
       guestToken,
     );
     await clientSocket.read();
+    clientSocket.send({ type: "client.subscribeHost", hostId: host.id });
+    expect(await clientSocket.read()).toMatchObject({
+      type: "host.event",
+      event: {
+        hostId: host.id,
+        event: { type: "host.online" },
+      },
+    });
+    expect(await clientSocket.read()).toMatchObject({
+      type: "host.subscription.ready",
+      hostId: host.id,
+    });
     clientSocket.send({
       type: "client.toHost",
       hostId: host.id,
@@ -653,6 +665,11 @@ describe("Relay WebSocket gateway", () => {
       hostId: host.id,
       userId: guest.id,
       revokedRole: "operator",
+    });
+    expect(await clientSocket.read()).toEqual({
+      type: "relay.error",
+      code: "HOST_ACCESS_DENIED",
+      message: "HostAccess was revoked",
     });
 
     clientSocket.send({

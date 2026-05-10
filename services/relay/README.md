@@ -194,7 +194,7 @@ revoke:
 }
 ```
 
-owner access は sharing API から revoke できません。
+owner access は sharing API から revoke できません。operator / viewer access を revoke した場合、Relay は対象 user の active Host subscription を即時解除し、該当 WebSocket に `HOST_ACCESS_DENIED` を送ります。
 
 ## Rate Limits
 
