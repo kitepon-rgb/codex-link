@@ -1,7 +1,7 @@
 import type { DeviceId, HostId, ProjectId, UserId } from "@codex-link/protocol";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 
 export interface MacHostProjectConfig {
   id: ProjectId;
@@ -42,8 +42,24 @@ export function defaultMacHostConfigPath(): string {
 export async function loadMacHostConfig(
   configPath = defaultMacHostConfigPath(),
 ): Promise<MacHostConfig> {
+  await assertMacHostConfigFileMode(configPath);
   const raw = await readFile(configPath, "utf8");
   return parseMacHostConfig(JSON.parse(raw) as RawMacHostConfig);
+}
+
+export async function assertMacHostConfigFileMode(configPath: string): Promise<void> {
+  const info = await stat(configPath);
+  if (!info.isFile()) {
+    throw new Error(`Mac Host config path is not a file: ${configPath}`);
+  }
+  if (process.platform === "win32") {
+    return;
+  }
+  if ((info.mode & 0o077) !== 0) {
+    throw new Error(
+      `Mac Host config contains a device credential and must not be readable by group or others: ${configPath}. Run chmod 600 ${configPath}`,
+    );
+  }
 }
 
 export function parseMacHostConfig(input: RawMacHostConfig): MacHostConfig {

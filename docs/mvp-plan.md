@@ -249,6 +249,7 @@ docs/
   - [x] MVP placeholder として、device ごとの bearer credential を発行し、Relay 側は hash だけを保存する。
   - [x] Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke を device credential で保護する。
   - [x] iPhone app の device session bearer token を Keychain に保存する。
+  - [x] Mac Host config の bearer credential file mode を runtime で検査し、group / others readable な config を拒否する。
   - [ ] 外部 IdP / login、短命 user session、Host 側 credential storage。
 - [ ] device revocation。
   - [x] MVP placeholder device session の revoke API を作り、revoked device の新規接続、pairing、既存 WebSocket message を Relay で拒否する。

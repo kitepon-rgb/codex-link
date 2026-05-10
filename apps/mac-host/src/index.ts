@@ -1,4 +1,5 @@
 export {
+  assertMacHostConfigFileMode,
   defaultMacHostConfigPath,
   loadMacHostConfig,
   parseMacHostConfig,

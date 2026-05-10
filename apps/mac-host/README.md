@@ -32,7 +32,7 @@ Phase 3 の最初として、Host の最小 package を置いています。
 
 ## セットアップ placeholder
 
-Relay に `CODEX_LINK_HOST_BOOTSTRAP_TOKEN` が設定されている場合は、installer が Host bootstrap API へ接続し、`userId`、`deviceId`、`deviceToken`、`hostId` を受け取って Host config を作ります。Host は Relay WebSocket 接続時に `deviceToken` を bearer credential として送ります。
+Relay に `CODEX_LINK_HOST_BOOTSTRAP_TOKEN` が設定されている場合は、installer が Host bootstrap API へ接続し、`userId`、`deviceId`、`deviceToken`、`hostId` を受け取って Host config を作ります。Host は Relay WebSocket 接続時に `deviceToken` を bearer credential として送ります。`host.json` には bearer credential が入るため、installer は `chmod 600` を設定し、Host runtime も group / others readable な config を拒否します。
 
 ```bash
 CODEX_LINK_RELAY_URL=https://relay.example.com \

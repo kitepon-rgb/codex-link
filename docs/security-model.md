@@ -68,7 +68,7 @@ Host ID を知っていることは、認可ではありません。
 
 Host インストーラは設定を自動化してよいですが、未認証の Host を作ってはいけません。一発インストールの結果は、認証済みで、ユーザー所有で、取り消し可能なデバイス登録である必要があります。
 
-MVP の device credential は、device ごとの bearer token です。Host bootstrap と iPhone placeholder device session 作成時に Relay が一度だけ token を返し、Relay 側は token 本体ではなく SHA-256 hash だけを保存します。iPhone app は device session bearer token を Keychain に保存します。Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke は `Authorization: Bearer <deviceToken>` を要求します。
+MVP の device credential は、device ごとの bearer token です。Host bootstrap と iPhone placeholder device session 作成時に Relay が一度だけ token を返し、Relay 側は token 本体ではなく SHA-256 hash だけを保存します。iPhone app は device session bearer token を Keychain に保存します。Mac Host の `host.json` は `chmod 600` 前提で、runtime も group / others readable な config を拒否します。Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke は `Authorization: Bearer <deviceToken>` を要求します。
 
 MVP の iPhone pairing は placeholder 実装です。Host が認証済み WebSocket 接続から短命かつ一回限りの pairing code を発行し、iPhone の認証済み placeholder device session がその code を redeem した場合だけ、対象 Host への `operator` HostAccess を付与します。すでに `owner` HostAccess を持つ user の role は pairing で降格しません。Host ID を知っているだけでは pairing できません。
 
