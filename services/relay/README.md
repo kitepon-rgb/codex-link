@@ -28,8 +28,8 @@ Relay がしないもの:
 
 Phase 2 では、DB や HTTP server を入れる前に、Relay の中心ルールを TypeScript のインメモリ service として置いています。
 
-- `src/relay.ts`: User / Device / Host / HostAccess / Connection / event cache / Host pairing code / audit metadata の操作。
-- `src/websocket.ts`: Host / iPhone placeholder WebSocket gateway、Host bootstrap HTTP API、device session pairing / revocation API。
+- `src/relay.ts`: User / Device / Host / HostAccess / Connection / device credential / event cache / Host pairing code / audit metadata の操作。
+- `src/websocket.ts`: Host / iPhone placeholder WebSocket gateway、Host bootstrap HTTP API、device session pairing / revocation / HostAccess sharing API。
 - `src/state.ts`: インメモリ状態。
 - `src/config.ts`: Relay ドメインと event cache limit の設定。
 - `test/relay.test.ts`: Host 一覧の ACL filter と Host route 認可のテスト。
@@ -61,6 +61,8 @@ request:
 }
 ```
 
+response には `userId`、`deviceId`、`deviceToken`、`hostId` が含まれます。Relay は `deviceToken` 本体を保存せず、SHA-256 hash だけを保存します。Host は以後の Relay WebSocket 接続で `Authorization: Bearer <deviceToken>` を送ります。
+
 ## Device Session / Pairing API
 
 iPhone app は `POST /api/device-session` で MVP placeholder device session を作ります。
@@ -71,6 +73,8 @@ iPhone app は `POST /api/device-session` で MVP placeholder device session を
   "deviceName": "Owner iPhone"
 }
 ```
+
+response には `userId`、`deviceId`、`deviceToken` が含まれます。iPhone app はこの `deviceToken` を保存し、Relay WebSocket、pairing、revocation API で `Authorization: Bearer <deviceToken>` を送ります。
 
 Host は Relay WebSocket 接続後に `host.pairingCode.create` を送ると、Relay から `host.pairingCode.created` を受け取ります。
 
@@ -83,7 +87,7 @@ Host は Relay WebSocket 接続後に `host.pairingCode.create` を送ると、R
 }
 ```
 
-iPhone app は `POST /api/device-session/pair` で code を redeem します。成功すると、対象 Host への `operator` HostAccess が付与されます。code は短命かつ一回限りです。
+iPhone app は `POST /api/device-session/pair` に `Authorization: Bearer <deviceToken>` を付けて code を redeem します。成功すると、対象 Host への `operator` HostAccess が付与されます。code は短命かつ一回限りです。
 
 ```json
 {
@@ -106,7 +110,7 @@ response:
 }
 ```
 
-MVP placeholder device session は `POST /api/device-session/revoke` で revoke できます。Relay は revoked device の新規 WebSocket 接続、pairing、既存 WebSocket session からの message を拒否します。active WebSocket session がある場合は `relay.error` を送って切断します。
+MVP placeholder device session は `POST /api/device-session/revoke` に `Authorization: Bearer <deviceToken>` を付けて revoke できます。Relay は revoked device の新規 WebSocket 接続、pairing、既存 WebSocket session からの message を拒否します。active WebSocket session がある場合は `relay.error` を送って切断します。
 
 ```json
 {
@@ -128,19 +132,20 @@ response:
 
 ## Audit Metadata
 
-Relay は Host routing、HostAccess grant / denial、pairing code 発行 / redeem、device registration / revocation の最小 audit metadata を記録します。
+Relay は Host routing、HostAccess grant / denial、pairing code 発行 / redeem、device registration / credential issue / authentication denial / revocation の最小 audit metadata を記録します。
 
 Audit metadata には pairing code 本体、client.toHost payload、Codex transcript、project folder 内容は保存しません。
 
 ## HostAccess Sharing API
 
-MVP placeholder では、Host owner として登録された user だけが HostAccess を grant / revoke できます。これはまだ production authentication ではなく、request body の `ownerUserId` を Relay が既存 HostAccess と照合する段階です。
+MVP placeholder では、Host owner として登録された user だけが HostAccess を grant / revoke できます。request body の `ownerUserId` / `ownerDeviceId` と bearer `deviceToken` を Relay が照合し、さらに既存 HostAccess の owner role を確認します。これはまだ production user authentication ではありません。
 
 grant:
 
 ```json
 {
   "ownerUserId": "usr_1",
+  "ownerDeviceId": "dev_1",
   "hostId": "host_1",
   "targetUserId": "usr_2",
   "role": "operator"
@@ -154,6 +159,7 @@ revoke:
 ```json
 {
   "ownerUserId": "usr_1",
+  "ownerDeviceId": "dev_1",
   "hostId": "host_1",
   "targetUserId": "usr_2"
 }
@@ -193,6 +199,8 @@ iPhone client:
 ws://localhost:3000/relay?kind=client&deviceId=<deviceId>&userId=<userId>
 ```
 
+どちらも WebSocket handshake に `Authorization: Bearer <deviceToken>` が必要です。
+
 Client は `client.subscribeHost` に `afterSequence` を付けると、Relay はその続きの cached Host events を replay してから `host.subscription.ready` を返します。要求された sequence の続きが cache から落ちている場合、Relay は `HOST_EVENT_CACHE_GAP` を返し、欠落した timeline を成功扱いしません。
 
-これは本物の認証ではありません。Phase 2 の目的は、WebSocket 経由でも HostAccess 認可を必ず通すことを固定することです。
+これは production authentication ではありません。現時点の credential は device ごとの bearer token で、外部 IdP、短命 user session、永続 storage はまだありません。

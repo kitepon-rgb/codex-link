@@ -8,6 +8,7 @@ final class ProjectionTests: XCTestCase {
           "relayUrl": "http://relay.test",
           "userId": "usr_1",
           "deviceId": "dev_1",
+          "deviceToken": "device_token_1",
           "displayName": "owner",
           "deviceName": "Owner iPhone"
         }
@@ -19,6 +20,7 @@ final class ProjectionTests: XCTestCase {
             relayUrl: "http://relay.test",
             userId: "usr_1",
             deviceId: "dev_1",
+            deviceToken: "device_token_1",
             displayName: "owner",
             deviceName: "Owner iPhone"
         ))
@@ -112,6 +114,7 @@ final class ProjectionTests: XCTestCase {
             relayUrl: "http://relay.test",
             userId: "usr_1",
             deviceId: "dev_1",
+            deviceToken: "device_token_1",
             displayName: "owner",
             deviceName: "Owner iPhone"
         )
@@ -637,6 +640,7 @@ final class ProjectionTests: XCTestCase {
             relayUrl: "http://relay.test",
             userId: "usr_1",
             deviceId: "dev_1",
+            deviceToken: "device_token_1",
             displayName: "owner",
             deviceName: "Owner iPhone"
         )
@@ -696,6 +700,7 @@ final class ProjectionTests: XCTestCase {
             relayUrl: "http://relay.test",
             userId: "usr_1",
             deviceId: "dev_1",
+            deviceToken: "device_token_1",
             displayName: "owner",
             deviceName: "Owner iPhone"
         )
@@ -737,6 +742,7 @@ final class ProjectionTests: XCTestCase {
             relayUrl: "http://relay.test",
             userId: "usr_1",
             deviceId: "dev_1",
+            deviceToken: "device_token_1",
             displayName: "owner",
             deviceName: "Owner iPhone"
         )
@@ -776,6 +782,7 @@ final class ProjectionTests: XCTestCase {
         }
 
         XCTAssertEqual(deviceClient.pairingCode, "ABCD-EF12")
+        XCTAssertEqual(deviceClient.pairingDeviceToken, "device_token_1")
         XCTAssertEqual(model.selection.hostId, "host_1")
 
         model.stop()
@@ -787,6 +794,7 @@ final class ProjectionTests: XCTestCase {
             relayUrl: "http://relay.test",
             userId: "usr_1",
             deviceId: "dev_1",
+            deviceToken: "device_token_1",
             displayName: "owner",
             deviceName: "Owner iPhone"
         )
@@ -838,6 +846,7 @@ final class ProjectionTests: XCTestCase {
         }
 
         XCTAssertEqual(deviceClient.revokedUserId, "usr_1")
+        XCTAssertEqual(deviceClient.revocationDeviceToken, "device_token_1")
         XCTAssertTrue(relayClient.didDisconnect)
         XCTAssertNil(deviceStore.deviceSession)
         XCTAssertNil(bookmarkStore.bookmark)
@@ -950,8 +959,10 @@ private final class MockDeviceSessionClient: CodexLinkDeviceSessionManaging, @un
     let revocationResult: CodexLinkDeviceRevocationResult?
     var registerCallCount = 0
     var pairingCode: String?
+    var pairingDeviceToken: String?
     var revokedUserId: String?
     var revokedDeviceId: String?
+    var revocationDeviceToken: String?
 
     init(
         result: CodexLinkDeviceSession,
@@ -974,9 +985,11 @@ private final class MockDeviceSessionClient: CodexLinkDeviceSessionManaging, @un
     func pairHost(
         pairingCode: String,
         userId: String,
-        deviceId: String
+        deviceId: String,
+        deviceToken: String
     ) async throws -> CodexLinkDevicePairingResult {
         self.pairingCode = pairingCode
+        pairingDeviceToken = deviceToken
         if let pairingResult {
             return pairingResult
         }
@@ -992,10 +1005,12 @@ private final class MockDeviceSessionClient: CodexLinkDeviceSessionManaging, @un
 
     func revokeDevice(
         userId: String,
-        deviceId: String
+        deviceId: String,
+        deviceToken: String
     ) async throws -> CodexLinkDeviceRevocationResult {
         revokedUserId = userId
         revokedDeviceId = deviceId
+        revocationDeviceToken = deviceToken
         if let revocationResult {
             return revocationResult
         }

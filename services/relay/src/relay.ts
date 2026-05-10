@@ -9,8 +9,13 @@ import type {
   User,
   UserId,
 } from "@codex-link/protocol";
-import { randomBytes } from "node:crypto";
-import { RelayAuthzError, RelayError, RelayNotFoundError } from "./errors.js";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  RelayAuthnError,
+  RelayAuthzError,
+  RelayError,
+  RelayNotFoundError,
+} from "./errors.js";
 import { createId } from "./id.js";
 import type { RelayConfig } from "./config.js";
 import { loadRelayConfig } from "./config.js";
@@ -42,12 +47,14 @@ export interface HostBootstrapInput {
 export interface HostBootstrapRegistration {
   user: User;
   device: Device;
+  deviceToken: string;
   host: Host;
 }
 
 export interface PlaceholderDeviceSession {
   user: User;
   device: Device;
+  deviceToken: string;
 }
 
 export interface HostPairingGrant {
@@ -74,6 +81,12 @@ export interface HostAccessRevocation {
 export interface DeviceRevocation {
   user: User;
   device: Device;
+}
+
+export interface DeviceCredentialIssue {
+  user: User;
+  device: Device;
+  token: string;
 }
 
 export interface HostEventReplay {
@@ -119,6 +132,34 @@ export class RelayService {
       detail: { kind },
     });
     return device;
+  }
+
+  issueDeviceCredential(input: {
+    userId: UserId;
+    deviceId: DeviceId;
+  }): DeviceCredentialIssue {
+    const user = this.requireUser(input.userId);
+    const device = this.requireDevice(input.deviceId);
+    if (device.userId !== user.id) {
+      throw new RelayAuthzError("Only the owning user can issue a device credential");
+    }
+    if (device.revokedAt) {
+      throw new RelayAuthzError("Revoked device cannot receive a credential");
+    }
+    const token = randomBytes(32).toString("base64url");
+    this.state.deviceCredentials.set(device.id, {
+      deviceId: device.id,
+      tokenHash: hashDeviceToken(token),
+      createdAt: new Date().toISOString(),
+    });
+    this.recordAudit({
+      action: "device.credential.issued",
+      outcome: "success",
+      userId: user.id,
+      deviceId: device.id,
+      detail: { kind: device.kind },
+    });
+    return { user, device, token };
   }
 
   registerHost(ownerUserId: UserId, deviceId: DeviceId, name: string): Host {
@@ -169,14 +210,16 @@ export class RelayService {
     }
     const user = this.loginPlaceholder(input.ownerDisplayName);
     const device = this.registerDevice(user.id, input.hostName, "mac-host");
+    const credential = this.issueDeviceCredential({ userId: user.id, deviceId: device.id });
     const host = this.registerHost(user.id, device.id, input.hostName);
-    return { user, device, host };
+    return { user, device, deviceToken: credential.token, host };
   }
 
   registerPlaceholderIphoneSession(displayName: string, deviceName: string): PlaceholderDeviceSession {
     const user = this.loginPlaceholder(displayName);
     const device = this.registerDevice(user.id, deviceName, "iphone");
-    return { user, device };
+    const credential = this.issueDeviceCredential({ userId: user.id, deviceId: device.id });
+    return { user, device, deviceToken: credential.token };
   }
 
   revokeDevice(input: { userId: UserId; deviceId: DeviceId; now?: Date }): DeviceRevocation {
@@ -566,6 +609,47 @@ export class RelayService {
     return device;
   }
 
+  authenticateDevice(deviceId: DeviceId, token: string | null): Device {
+    if (!token) {
+      this.recordAudit({
+        action: "device.authentication.denied",
+        outcome: "denied",
+        deviceId,
+        detail: { reason: "missing_credential" },
+      });
+      throw new RelayAuthnError("Device credential required");
+    }
+    const device = this.assertActiveDevice(deviceId);
+    const credential = this.state.deviceCredentials.get(deviceId);
+    if (!credential || !safeEqualHex(credential.tokenHash, hashDeviceToken(token))) {
+      this.recordAudit({
+        action: "device.authentication.denied",
+        outcome: "denied",
+        userId: device.userId,
+        deviceId,
+        detail: { reason: "invalid_credential" },
+      });
+      throw new RelayAuthnError("Invalid device credential");
+    }
+    return device;
+  }
+
+  authenticateUserDevice(userId: UserId, deviceId: DeviceId, token: string | null): Device {
+    this.requireUser(userId);
+    const device = this.authenticateDevice(deviceId, token);
+    if (device.userId !== userId) {
+      this.recordAudit({
+        action: "device.authentication.denied",
+        outcome: "denied",
+        userId,
+        deviceId,
+        detail: { reason: "user_device_mismatch" },
+      });
+      throw new RelayAuthzError("Device does not belong to the user");
+    }
+    return device;
+  }
+
   getPublicBaseUrl(): string {
     return this.config.publicBaseUrl;
   }
@@ -641,4 +725,17 @@ function normalizePairingCode(code: string): string {
 function formatPairingCode(rawCode: string): string {
   const normalized = normalizePairingCode(rawCode).slice(0, 8);
   return `${normalized.slice(0, 4)}-${normalized.slice(4)}`;
+}
+
+function hashDeviceToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function safeEqualHex(first: string, second: string): boolean {
+  const firstBuffer = Buffer.from(first, "hex");
+  const secondBuffer = Buffer.from(second, "hex");
+  if (firstBuffer.length !== secondBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(firstBuffer, secondBuffer);
 }

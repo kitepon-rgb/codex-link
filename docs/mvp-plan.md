@@ -26,7 +26,7 @@ iPhone app
 ## 矛盾監査 2026-05-10
 
 - UI 方針: 起動直後に常に Host list を主画面にする計画は採用しない。前回の Host / Project / Thread が復元できる場合は conversation screen へ戻し、Host list は初回、切替、アクセス不能時の導線にする。
-- 認証方針: Phase 4 の Login は MVP device session / placeholder login とする。本物の multi-user authentication、device revocation、ACL sharing は Phase 7 の対象として残す。
+- 認証方針: Phase 4 の Login は MVP device session / placeholder login とする。本物の multi-user authentication は Phase 7 の対象として残し、device revocation、ACL sharing、device credential は MVP placeholder から段階的に hardening する。
 - event 方針: Codex Link event 正規化、transcript projection、timeline projection、approval projection、LiveActivityState はすでに core 実装済みとして扱う。Phase 6 は追加実装ではなく、実 UI への統合と log gap 検証を中心にする。
 - Codex 連携方針: remote connections は第一級の検証対象だが、2026-05-10 時点の MVP 入口は Mac Host outbound Relay + local `codex app-server` stdio とする。SSH 設定は remote connections 経路の検証項目であり、MVP の通常接続体験でユーザーへ要求しない。
 
@@ -197,7 +197,7 @@ docs/
   - Host WebSocket は `host.pairingCode.create` で短命かつ一回限りの pairing code を発行できる。
   - iPhone app は Host picker から pairing code を redeem し、Relay の `/api/device-session/pair` で対象 Host への `operator` HostAccess を受け取る。
   - redeem 後は `client.subscribeHost` で対象 Host の event cache を購読し、Host / Project / Thread 表示に入る。
-  - これは MVP placeholder pairing であり、本物の authentication、device revocation、ACL sharing は Phase 7。
+  - これは MVP placeholder pairing であり、production authentication、短命 user session、production ACL sharing は Phase 7。
 
 ## Phase 5: Live Activity MVP
 
@@ -244,14 +244,20 @@ docs/
 ## Phase 7: Multi-user hardening
 
 - [ ] 本物の authentication。
+  - [x] MVP placeholder として、device ごとの bearer credential を発行し、Relay 側は hash だけを保存する。
+  - [x] Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke を device credential で保護する。
+  - [ ] 外部 IdP / login、短命 user session、永続 credential storage。
 - [ ] device revocation。
   - [x] MVP placeholder device session の revoke API を作り、revoked device の新規接続、pairing、既存 WebSocket message を Relay で拒否する。
-  - [ ] 本物の authentication / device credential と結びついた production revocation。
+  - [x] MVP device credential と結びついた revocation API にする。
+  - [ ] production authentication と結びついた revocation。
 - [ ] Host sharing / ACL。
   - [x] MVP placeholder として、Host owner role だけが `operator` / `viewer` HostAccess を grant / revoke できる owner-checked API を作る。
-  - [ ] production authentication / device credential と結びついた sharing UI / API。
+  - [x] owner device credential と結びついた sharing API にする。
+  - [ ] production authentication と結びついた sharing UI / API。
 - [ ] audit metadata。
   - [x] Relay 内で Host routing、HostAccess grant / denial、pairing、device registration / revocation の最小 audit metadata を記録する。
+  - [x] device credential issue / authentication denial の最小 audit metadata を記録する。
   - [ ] production storage / retention / search policy。
 - [ ] rate limits。
   - [x] MVP placeholder として、単一 Relay process 内の in-memory window rate limit を sensitive HTTP / WebSocket route に適用する。

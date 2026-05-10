@@ -40,13 +40,17 @@ describe("Relay WebSocket gateway", () => {
     const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
     const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
     const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const iphoneToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: iphone.id }).token;
+    const macToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: mac.id }).token;
     const baseUrl = await startRelay(relay, servers);
 
     const hostSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=host&deviceId=${mac.id}&hostId=${host.id}`,
+      macToken,
     );
     const clientSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=client&deviceId=${iphone.id}&userId=${owner.id}`,
+      iphoneToken,
     );
     await hostSocket.read();
     await clientSocket.read();
@@ -75,10 +79,15 @@ describe("Relay WebSocket gateway", () => {
     const strangerIphone = relay.registerDevice(stranger.id, "Stranger iPhone", "iphone");
     const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
     const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const strangerToken = relay.issueDeviceCredential({
+      userId: stranger.id,
+      deviceId: strangerIphone.id,
+    }).token;
     const baseUrl = await startRelay(relay, servers);
 
     const clientSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=client&deviceId=${strangerIphone.id}&userId=${stranger.id}`,
+      strangerToken,
     );
     await clientSocket.read();
     clientSocket.send({
@@ -100,11 +109,13 @@ describe("Relay WebSocket gateway", () => {
     const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
     const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
     const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const iphoneToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: iphone.id }).token;
     relay.appendHostEvent(host.id, { type: "host.offline", hostId: host.id });
     const baseUrl = await startRelay(relay, servers);
 
     const clientSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=client&deviceId=${iphone.id}&userId=${owner.id}`,
+      iphoneToken,
     );
     await clientSocket.read();
     clientSocket.send({
@@ -134,6 +145,7 @@ describe("Relay WebSocket gateway", () => {
     const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
     const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
     const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const iphoneToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: iphone.id }).token;
     const first = relay.appendHostEvent(host.id, { type: "host.offline", hostId: host.id });
     const second = relay.appendHostEvent(host.id, {
       type: "project.list.updated",
@@ -144,6 +156,7 @@ describe("Relay WebSocket gateway", () => {
 
     const clientSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=client&deviceId=${iphone.id}&userId=${owner.id}`,
+      iphoneToken,
     );
     await clientSocket.read();
     clientSocket.send({
@@ -177,6 +190,7 @@ describe("Relay WebSocket gateway", () => {
     const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
     const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
     const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const iphoneToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: iphone.id }).token;
     const first = relay.appendHostEvent(host.id, { type: "host.online", host });
     relay.appendHostEvent(host.id, { type: "host.offline", hostId: host.id });
     relay.appendHostEvent(host.id, {
@@ -189,6 +203,7 @@ describe("Relay WebSocket gateway", () => {
 
     const clientSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=client&deviceId=${iphone.id}&userId=${owner.id}`,
+      iphoneToken,
     );
     await clientSocket.read();
     clientSocket.send({
@@ -229,6 +244,7 @@ describe("Relay WebSocket gateway", () => {
       relayUrl: string;
       userId: string;
       deviceId: string;
+      deviceToken: string;
       hostId: string;
       project: { id: string; name: string; path: string };
     };
@@ -263,6 +279,7 @@ describe("Relay WebSocket gateway", () => {
       relayUrl: string;
       userId: string;
       deviceId: string;
+      deviceToken: string;
       displayName: string;
       deviceName: string;
     };
@@ -274,6 +291,7 @@ describe("Relay WebSocket gateway", () => {
 
     const clientSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=client&deviceId=${body.deviceId}&userId=${body.userId}`,
+      body.deviceToken,
     );
     expect(await clientSocket.read()).toMatchObject({
       type: "relay.ready",
@@ -328,10 +346,12 @@ describe("Relay WebSocket gateway", () => {
     const owner = relay.loginPlaceholder("owner");
     const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
     const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const macToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: mac.id }).token;
     const baseUrl = await startRelay(relay, servers);
 
     const hostSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=host&deviceId=${mac.id}&hostId=${host.id}`,
+      macToken,
     );
     await hostSocket.read();
     hostSocket.send({ type: "host.pairingCode.create" });
@@ -365,15 +385,23 @@ describe("Relay WebSocket gateway", () => {
         deviceName: "Owner iPhone",
       }),
     });
-    const device = (await deviceResponse.json()) as { userId: string; deviceId: string };
+    const device = (await deviceResponse.json()) as {
+      userId: string;
+      deviceId: string;
+      deviceToken: string;
+    };
     const clientSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=client&deviceId=${device.deviceId}&userId=${device.userId}`,
+      device.deviceToken,
     );
     await clientSocket.read();
 
     const revokeResponse = await fetch(`${httpBaseUrl}/api/device-session/revoke`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${device.deviceToken}`,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         userId: device.userId,
         deviceId: device.deviceId,
@@ -393,6 +421,7 @@ describe("Relay WebSocket gateway", () => {
 
     const rejectedSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=client&deviceId=${device.deviceId}&userId=${device.userId}`,
+      device.deviceToken,
     );
     expect(await rejectedSocket.read()).toEqual({
       type: "relay.error",
@@ -410,10 +439,12 @@ describe("Relay WebSocket gateway", () => {
     const owner = relay.loginPlaceholder("owner");
     const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
     const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const macToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: mac.id }).token;
     const baseUrl = await startRelay(relay, servers);
 
     const hostSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=host&deviceId=${mac.id}&hostId=${host.id}`,
+      macToken,
     );
     await hostSocket.read();
     hostSocket.send({ type: "host.pairingCode.create" });
@@ -434,11 +465,18 @@ describe("Relay WebSocket gateway", () => {
         deviceName: "Owner iPhone",
       }),
     });
-    const device = (await deviceResponse.json()) as { userId: string; deviceId: string };
+    const device = (await deviceResponse.json()) as {
+      userId: string;
+      deviceId: string;
+      deviceToken: string;
+    };
 
     const pairResponse = await fetch(`${baseUrl.replace("ws://", "http://")}/api/device-session/pair`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${device.deviceToken}`,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         userId: device.userId,
         deviceId: device.deviceId,
@@ -455,6 +493,7 @@ describe("Relay WebSocket gateway", () => {
 
     const clientSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=client&deviceId=${device.deviceId}&userId=${device.userId}`,
+      device.deviceToken,
     );
     await clientSocket.read();
     clientSocket.send({ type: "client.subscribeHost", hostId: host.id });
@@ -478,19 +517,29 @@ describe("Relay WebSocket gateway", () => {
     const guestIphone = relay.registerDevice(guest.id, "Guest iPhone", "iphone");
     const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
     const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const guestToken = relay.issueDeviceCredential({
+      userId: guest.id,
+      deviceId: guestIphone.id,
+    }).token;
+    const macToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: mac.id }).token;
     const baseUrl = await startRelay(relay, servers);
     const httpBaseUrl = baseUrl.replace("ws://", "http://");
 
     const hostSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=host&deviceId=${mac.id}&hostId=${host.id}`,
+      macToken,
     );
     await hostSocket.read();
 
     const grantResponse = await fetch(`${httpBaseUrl}/api/host-access/grant`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${macToken}`,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         ownerUserId: owner.id,
+        ownerDeviceId: mac.id,
         hostId: host.id,
         targetUserId: guest.id,
         role: "operator",
@@ -505,6 +554,7 @@ describe("Relay WebSocket gateway", () => {
 
     const clientSocket = await openRelaySocket(
       `${baseUrl}/relay?kind=client&deviceId=${guestIphone.id}&userId=${guest.id}`,
+      guestToken,
     );
     await clientSocket.read();
     clientSocket.send({
@@ -523,9 +573,13 @@ describe("Relay WebSocket gateway", () => {
 
     const revokeResponse = await fetch(`${httpBaseUrl}/api/host-access/revoke`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${macToken}`,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         ownerUserId: owner.id,
+        ownerDeviceId: mac.id,
         hostId: host.id,
         targetUserId: guest.id,
       }),
@@ -546,6 +600,75 @@ describe("Relay WebSocket gateway", () => {
       type: "relay.error",
       code: "HOST_ACCESS_DENIED",
       message: "Host access denied",
+    });
+  });
+
+  it("rejects WebSocket connections without a device credential", async () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const baseUrl = await startRelay(relay, servers);
+
+    const clientSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=client&deviceId=${iphone.id}&userId=${owner.id}`,
+    );
+
+    expect(await clientSocket.read()).toEqual({
+      type: "relay.error",
+      code: "AUTHENTICATION_REQUIRED",
+      message: "Device credential required",
+    });
+  });
+
+  it("rejects protected device-session HTTP calls with invalid or missing credentials", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+    });
+    const baseUrl = await startRelay(relay, servers);
+    const httpBaseUrl = baseUrl.replace("ws://", "http://");
+
+    const deviceResponse = await fetch(`${httpBaseUrl}/api/device-session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        displayName: "owner",
+        deviceName: "Owner iPhone",
+      }),
+    });
+    const device = (await deviceResponse.json()) as { userId: string; deviceId: string };
+
+    const pairResponse = await fetch(`${httpBaseUrl}/api/device-session/pair`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer invalid",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        userId: device.userId,
+        deviceId: device.deviceId,
+        pairingCode: "ABCD-EF12",
+      }),
+    });
+    expect(pairResponse.status).toBe(401);
+    await expect(pairResponse.json()).resolves.toMatchObject({
+      code: "AUTHENTICATION_REQUIRED",
+      message: "Invalid device credential",
+    });
+
+    const revokeResponse = await fetch(`${httpBaseUrl}/api/device-session/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: device.userId,
+        deviceId: device.deviceId,
+      }),
+    });
+    expect(revokeResponse.status).toBe(401);
+    await expect(revokeResponse.json()).resolves.toMatchObject({
+      code: "AUTHENTICATION_REQUIRED",
+      message: "Device credential required",
     });
   });
 });
@@ -569,9 +692,16 @@ interface TestRelaySocket {
   read(): Promise<RelayServerMessage>;
 }
 
-function openRelaySocket(url: string): Promise<TestRelaySocket> {
+function openRelaySocket(url: string, deviceToken?: string): Promise<TestRelaySocket> {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(
+      url,
+      deviceToken
+        ? {
+            headers: { authorization: `Bearer ${deviceToken}` },
+          }
+        : undefined,
+    );
     const messages: RelayServerMessage[] = [];
     const readers: Array<(message: RelayServerMessage) => void> = [];
     socket.on("message", (raw) => {

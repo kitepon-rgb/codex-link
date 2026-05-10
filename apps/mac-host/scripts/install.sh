@@ -74,7 +74,7 @@ if [[ -n "${CODEX_LINK_HOST_BOOTSTRAP_TOKEN:-}" ]]; then
 const fs = require("node:fs");
 const [responseFile, configFile] = process.argv.slice(2);
 const response = JSON.parse(fs.readFileSync(responseFile, "utf8"));
-for (const field of ["relayUrl", "userId", "deviceId", "hostId", "hostName"]) {
+for (const field of ["relayUrl", "userId", "deviceId", "deviceToken", "hostId", "hostName"]) {
   if (!response[field]) {
     throw new Error(`Bootstrap response missing ${field}`);
   }
@@ -92,6 +92,7 @@ fs.writeFileSync(
     relayUrl: response.relayUrl,
     userId: response.userId,
     deviceId: response.deviceId,
+    deviceToken: response.deviceToken,
     hostId: response.hostId,
     hostName: response.hostName,
     projects: [project],
@@ -101,6 +102,7 @@ NODE
 else
   required CODEX_LINK_USER_ID
   required CODEX_LINK_DEVICE_ID
+  required CODEX_LINK_DEVICE_TOKEN
   required CODEX_LINK_HOST_ID
 
   node - "$CONFIG_FILE" <<'NODE'
@@ -112,6 +114,7 @@ fs.writeFileSync(
     relayUrl: process.env.CODEX_LINK_RELAY_URL,
     userId: process.env.CODEX_LINK_USER_ID,
     deviceId: process.env.CODEX_LINK_DEVICE_ID,
+    deviceToken: process.env.CODEX_LINK_DEVICE_TOKEN,
     hostId: process.env.CODEX_LINK_HOST_ID,
     hostName: process.env.HOST_NAME,
     projects: [

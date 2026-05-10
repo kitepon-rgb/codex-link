@@ -29,6 +29,7 @@ public final class CodexLinkRelayWebSocketClient: @unchecked Sendable {
     private let relayURL: URL
     private let userId: String
     private let deviceId: String
+    private let deviceToken: String
     private let session: URLSession
     private let actionEncoder: CodexLinkRelayActionEncoder
     private var task: URLSessionWebSocketTask?
@@ -37,19 +38,23 @@ public final class CodexLinkRelayWebSocketClient: @unchecked Sendable {
         relayURL: URL,
         userId: String,
         deviceId: String,
+        deviceToken: String,
         session: URLSession = .shared,
         actionEncoder: CodexLinkRelayActionEncoder = CodexLinkRelayActionEncoder()
     ) {
         self.relayURL = relayURL
         self.userId = userId
         self.deviceId = deviceId
+        self.deviceToken = deviceToken
         self.session = session
         self.actionEncoder = actionEncoder
     }
 
     public func connect() throws {
         let url = try clientWebSocketURL()
-        let task = session.webSocketTask(with: url)
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "authorization")
+        let task = session.webSocketTask(with: request)
         self.task = task
         task.resume()
     }

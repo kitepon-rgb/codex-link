@@ -239,7 +239,8 @@ public final class CodexLinkAppViewModel: ObservableObject {
             let result = try await deviceSessionClient.pairHost(
                 pairingCode: code,
                 userId: deviceSession.userId,
-                deviceId: deviceSession.deviceId
+                deviceId: deviceSession.deviceId,
+                deviceToken: deviceSession.deviceToken
             )
             selection = CodexLinkSessionSelection(hostId: result.hostId)
             if let relayClient {
@@ -268,7 +269,8 @@ public final class CodexLinkAppViewModel: ObservableObject {
         do {
             _ = try await deviceSessionClient.revokeDevice(
                 userId: deviceSession.userId,
-                deviceId: deviceSession.deviceId
+                deviceId: deviceSession.deviceId,
+                deviceToken: deviceSession.deviceToken
             )
             clearLocalSessionState()
         } catch {
@@ -411,7 +413,8 @@ public final class CodexLinkAppViewModel: ObservableObject {
         return CodexLinkRelayWebSocketClient(
             relayURL: relayURL,
             userId: deviceSession.userId,
-            deviceId: deviceSession.deviceId
+            deviceId: deviceSession.deviceId,
+            deviceToken: deviceSession.deviceToken
         )
     }
 }

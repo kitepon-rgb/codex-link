@@ -8,6 +8,7 @@ describe("MacHostSessionRunner", () => {
     relayUrl: "ws://127.0.0.1:3000",
     userId: "usr_1" as never,
     deviceId: "dev_1" as never,
+    deviceToken: "device_token_1",
     hostId: "host_1" as never,
     hostName: "MacBook",
     projects: [{ id: "project_1" as never, name: "Codex Link", path: "/repo" }],

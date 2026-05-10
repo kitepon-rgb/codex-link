@@ -13,6 +13,7 @@ export interface MacHostConfig {
   relayUrl: string;
   userId: UserId;
   deviceId: DeviceId;
+  deviceToken: string;
   hostId: HostId;
   hostName: string;
   projects: MacHostProjectConfig[];
@@ -28,6 +29,7 @@ interface RawMacHostConfig {
   relayUrl?: unknown;
   userId?: unknown;
   deviceId?: unknown;
+  deviceToken?: unknown;
   hostId?: unknown;
   hostName?: string;
   projects?: RawMacHostProjectConfig[];
@@ -48,6 +50,7 @@ export function parseMacHostConfig(input: RawMacHostConfig): MacHostConfig {
   const relayUrl = requiredString(input.relayUrl, "relayUrl");
   const userId = requiredString(input.userId, "userId") as UserId;
   const deviceId = requiredString(input.deviceId, "deviceId") as DeviceId;
+  const deviceToken = requiredString(input.deviceToken, "deviceToken");
   const hostId = requiredString(input.hostId, "hostId") as HostId;
   const hostName = input.hostName ?? hostname();
   const projects = input.projects ?? [];
@@ -58,6 +61,7 @@ export function parseMacHostConfig(input: RawMacHostConfig): MacHostConfig {
     relayUrl,
     userId,
     deviceId,
+    deviceToken,
     hostId,
     hostName,
     projects: projects.map((project, index) => ({

@@ -25,7 +25,11 @@ export class MacHostRelayClient {
   }
 
   connect(): Promise<void> {
-    const socket = new this.WebSocketImpl(this.buildRelayUrl());
+    const socket = new this.WebSocketImpl(this.buildRelayUrl(), {
+      headers: {
+        authorization: `Bearer ${this.options.config.deviceToken}`,
+      },
+    });
     this.socket = socket;
     return new Promise((resolve, reject) => {
       socket.once("open", () => {

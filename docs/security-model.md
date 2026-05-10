@@ -68,13 +68,15 @@ Host ID を知っていることは、認可ではありません。
 
 Host インストーラは設定を自動化してよいですが、未認証の Host を作ってはいけません。一発インストールの結果は、認証済みで、ユーザー所有で、取り消し可能なデバイス登録である必要があります。
 
-MVP の iPhone pairing は placeholder 実装です。Host が認証済み WebSocket 接続から短命かつ一回限りの pairing code を発行し、iPhone の placeholder device session がその code を redeem した場合だけ、対象 Host への `operator` HostAccess を付与します。Host ID を知っているだけでは pairing できません。
+MVP の device credential は、device ごとの bearer token です。Host bootstrap と iPhone placeholder device session 作成時に Relay が一度だけ token を返し、Relay 側は token 本体ではなく SHA-256 hash だけを保存します。Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke は `Authorization: Bearer <deviceToken>` を要求します。
 
-MVP の device revocation も placeholder 実装です。Relay は revoke 済み device の新規接続、pairing、既存 WebSocket session からの message を拒否し、active session を切断します。ただし revoke API 自体はまだ本物の user authentication で保護されていません。
+MVP の iPhone pairing は placeholder 実装です。Host が認証済み WebSocket 接続から短命かつ一回限りの pairing code を発行し、iPhone の認証済み placeholder device session がその code を redeem した場合だけ、対象 Host への `operator` HostAccess を付与します。Host ID を知っているだけでは pairing できません。
 
-この pairing / revocation は本物の multi-user authentication、device credential、ACL sharing の代替ではありません。それらは hardening phase で完成させます。
+MVP の device revocation も placeholder 実装です。Relay は revoke API を device credential で保護し、revoke 済み device の新規接続、pairing、既存 WebSocket session からの message を拒否し、active session を切断します。ただし外部 IdP、短命 user session、永続 credential storage はまだありません。
 
-MVP の Host sharing / ACL は、既存 HostAccess の owner role を持つ user だけが `operator` または `viewer` を grant / revoke できる段階です。request body の user id と既存 ACL を照合しますが、production authentication や短命 session credential はまだ未完成です。owner access は sharing API から revoke しません。
+この pairing / revocation / device credential は本物の multi-user authentication の代替ではありません。それらは hardening phase で完成させます。
+
+MVP の Host sharing / ACL は、既存 HostAccess の owner role を持つ user だけが `operator` または `viewer` を grant / revoke できる段階です。request body の `ownerUserId` / `ownerDeviceId`、bearer device credential、既存 ACL を照合しますが、production authentication や短命 session credential はまだ未完成です。owner access は sharing API から revoke しません。
 
 MVP の rate limit は単一 Relay process 内の in-memory window です。device session creation / pairing / revoke、HostAccess grant / revoke、Host bootstrap、Host pairing code creation、client subscribe / route を対象にします。複数 process で共有される quota、永続化、user plan 別の制御は hardening phase の対象です。
 
@@ -84,7 +86,7 @@ MVP の rate limit は単一 Relay process 内の in-memory window です。devi
 - Host メタデータ
 - Host のオンライン状態
 - アクセス制御レコード
-- 最小限の監査メタデータ。Host routing、HostAccess grant / denial、pairing、device registration / revocation の事実だけを記録し、pairing code 本体や Codex payload は記録しない。
+- 最小限の監査メタデータ。Host routing、HostAccess grant / denial、pairing、device registration / credential issue / authentication denial / revocation の事実だけを記録し、device token、pairing code 本体、Codex payload は記録しない。
 - 再接続用の短いイベントキャッシュ
 
 ## Relay が保存してはいけないもの

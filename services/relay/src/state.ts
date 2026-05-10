@@ -44,6 +44,12 @@ export interface RelayRateLimitBucket {
   resetAt: number;
 }
 
+export interface DeviceCredential {
+  deviceId: DeviceId;
+  tokenHash: string;
+  createdAt: string;
+}
+
 export interface RelayState {
   users: Map<UserId, User>;
   devices: Map<DeviceId, Device>;
@@ -55,6 +61,7 @@ export interface RelayState {
   hostPairingCodes: Map<string, HostPairingCode>;
   auditEvents: RelayAuditEvent[];
   rateLimitBuckets: Map<string, RelayRateLimitBucket>;
+  deviceCredentials: Map<DeviceId, DeviceCredential>;
   nextEventSequence: number;
   nextAuditSequence: number;
 }
@@ -71,6 +78,7 @@ export function createRelayState(): RelayState {
     hostPairingCodes: new Map(),
     auditEvents: [],
     rateLimitBuckets: new Map(),
+    deviceCredentials: new Map(),
     nextEventSequence: 1,
     nextAuditSequence: 1,
   };

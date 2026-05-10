@@ -102,7 +102,7 @@ export class RelayWebSocketGateway {
       path: options.path ?? "/relay",
     });
     this.server.on("connection", (socket, request) => {
-      this.handleConnection(socket, request.url ?? "").catch((error: unknown) => {
+      this.handleConnection(socket, request).catch((error: unknown) => {
         this.sendError(socket, error);
         socket.close();
       });
@@ -138,23 +138,25 @@ export class RelayWebSocketGateway {
     }
   }
 
-  private async handleConnection(socket: WebSocket, requestUrl: string): Promise<void> {
+  private async handleConnection(socket: WebSocket, request: IncomingMessage): Promise<void> {
+    const requestUrl = request.url ?? "";
     const url = new URL(requestUrl, "ws://relay.local");
     const kind = url.searchParams.get("kind");
     if (kind === "host") {
-      this.acceptHost(socket, url);
+      this.acceptHost(socket, url, request);
       return;
     }
     if (kind === "client") {
-      this.acceptClient(socket, url);
+      this.acceptClient(socket, url, request);
       return;
     }
     throw new RelayError("Unknown relay WebSocket kind", "BAD_WEBSOCKET_KIND");
   }
 
-  private acceptHost(socket: WebSocket, url: URL): void {
+  private acceptHost(socket: WebSocket, url: URL, request: IncomingMessage): void {
     const deviceId = requiredParam<DeviceId>(url, "deviceId");
     const hostId = requiredParam<HostId>(url, "hostId");
+    this.relay.authenticateDevice(deviceId, bearerToken(request.headers.authorization));
     const connection = this.relay.connectDevice(deviceId, hostId);
     const host = this.relay.markHostOnline(hostId);
     const session: HostSession = {
@@ -191,9 +193,10 @@ export class RelayWebSocketGateway {
     });
   }
 
-  private acceptClient(socket: WebSocket, url: URL): void {
+  private acceptClient(socket: WebSocket, url: URL, request: IncomingMessage): void {
     const deviceId = requiredParam<DeviceId>(url, "deviceId");
     const userId = requiredParam<UserId>(url, "userId");
+    this.relay.authenticateUserDevice(userId, deviceId, bearerToken(request.headers.authorization));
     const connection = this.relay.connectClientDevice(userId, deviceId);
     const session: ClientSession = {
       role: "client",
@@ -367,6 +370,7 @@ interface DeviceSessionRevokeRequest {
 
 interface HostAccessGrantRequest {
   ownerUserId?: unknown;
+  ownerDeviceId?: unknown;
   hostId?: unknown;
   targetUserId?: unknown;
   role?: unknown;
@@ -374,6 +378,7 @@ interface HostAccessGrantRequest {
 
 interface HostAccessRevokeRequest {
   ownerUserId?: unknown;
+  ownerDeviceId?: unknown;
   hostId?: unknown;
   targetUserId?: unknown;
 }
@@ -397,6 +402,7 @@ async function handleHttpRequest(
       relayUrl: relay.getPublicBaseUrl(),
       userId: session.user.id,
       deviceId: session.device.id,
+      deviceToken: session.deviceToken,
       displayName: session.user.displayName,
       deviceName: session.device.name,
     });
@@ -408,6 +414,7 @@ async function handleHttpRequest(
     const userId = requiredString(body.userId, "userId") as UserId;
     const deviceId = requiredString(body.deviceId, "deviceId") as DeviceId;
     const pairingCode = requiredString(body.pairingCode, "pairingCode");
+    relay.authenticateUserDevice(userId, deviceId, bearerToken(request.headers.authorization));
     relay.checkRateLimit({
       scope: "http.device_session.pair",
       key: deviceId,
@@ -428,6 +435,7 @@ async function handleHttpRequest(
     const body = (await readJson(request)) as DeviceSessionRevokeRequest;
     const userId = requiredString(body.userId, "userId") as UserId;
     const deviceId = requiredString(body.deviceId, "deviceId") as DeviceId;
+    relay.authenticateUserDevice(userId, deviceId, bearerToken(request.headers.authorization));
     relay.checkRateLimit({
       scope: "http.device_session.revoke",
       key: deviceId,
@@ -446,9 +454,11 @@ async function handleHttpRequest(
   if (request.method === "POST" && request.url === "/api/host-access/grant") {
     const body = (await readJson(request)) as HostAccessGrantRequest;
     const ownerUserId = requiredString(body.ownerUserId, "ownerUserId") as UserId;
+    const ownerDeviceId = requiredString(body.ownerDeviceId, "ownerDeviceId") as DeviceId;
     const hostId = requiredString(body.hostId, "hostId") as HostId;
     const targetUserId = requiredString(body.targetUserId, "targetUserId") as UserId;
     const role = requiredShareableHostRole(body.role);
+    relay.authenticateUserDevice(ownerUserId, ownerDeviceId, bearerToken(request.headers.authorization));
     relay.checkRateLimit({
       scope: "http.host_access.grant",
       key: `${ownerUserId}:${hostId}`,
@@ -471,8 +481,10 @@ async function handleHttpRequest(
   if (request.method === "POST" && request.url === "/api/host-access/revoke") {
     const body = (await readJson(request)) as HostAccessRevokeRequest;
     const ownerUserId = requiredString(body.ownerUserId, "ownerUserId") as UserId;
+    const ownerDeviceId = requiredString(body.ownerDeviceId, "ownerDeviceId") as DeviceId;
     const hostId = requiredString(body.hostId, "hostId") as HostId;
     const targetUserId = requiredString(body.targetUserId, "targetUserId") as UserId;
+    relay.authenticateUserDevice(ownerUserId, ownerDeviceId, bearerToken(request.headers.authorization));
     relay.checkRateLimit({
       scope: "http.host_access.revoke",
       key: `${ownerUserId}:${hostId}`,
@@ -509,6 +521,7 @@ async function handleHttpRequest(
       relayUrl: relay.getPublicBaseUrl(),
       userId: registration.user.id,
       deviceId: registration.device.id,
+      deviceToken: registration.deviceToken,
       hostId: registration.host.id,
       hostName: registration.host.name,
       project: project

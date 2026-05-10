@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { RelayAuthzError, RelayService } from "../src/index.js";
+import { createRelayState, RelayAuthnError, RelayAuthzError, RelayService } from "../src/index.js";
 import { resetIdsForTest } from "../src/id.js";
 
 describe("RelayService", () => {
@@ -53,6 +53,46 @@ describe("RelayService", () => {
       hostId: host.id,
       payload: { type: "turn.start" },
     });
+  });
+
+  it("issues hashed device credentials and authenticates active devices", () => {
+    const state = createRelayState();
+    const relay = new RelayService(state);
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+
+    const credential = relay.issueDeviceCredential({
+      userId: owner.id,
+      deviceId: iphone.id,
+    });
+
+    expect(credential.token.length).toBeGreaterThan(32);
+    expect(state.deviceCredentials.get(iphone.id)?.tokenHash).toHaveLength(64);
+    expect(state.deviceCredentials.get(iphone.id)?.tokenHash).not.toBe(credential.token);
+    expect(relay.authenticateUserDevice(owner.id, iphone.id, credential.token)).toBe(iphone);
+    expect(() => relay.authenticateUserDevice(owner.id, iphone.id, null)).toThrow(
+      RelayAuthnError,
+    );
+    expect(() => relay.authenticateUserDevice(owner.id, iphone.id, "invalid")).toThrow(
+      RelayAuthnError,
+    );
+    expect(relay.listAuditEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "device.credential.issued",
+          outcome: "success",
+          userId: owner.id,
+          deviceId: iphone.id,
+        }),
+        expect.objectContaining({
+          action: "device.authentication.denied",
+          outcome: "denied",
+          userId: owner.id,
+          deviceId: iphone.id,
+          detail: { reason: "invalid_credential" },
+        }),
+      ]),
+    );
   });
 
   it("enforces in-memory rate limits per scope and key", () => {
@@ -471,6 +511,10 @@ describe("RelayService", () => {
 
     expect(registration.user.displayName).toBe("owner");
     expect(registration.device.kind).toBe("mac-host");
+    expect(registration.deviceToken.length).toBeGreaterThan(32);
+    expect(relay.authenticateDevice(registration.device.id, registration.deviceToken)).toBe(
+      registration.device,
+    );
     expect(registration.host.deviceId).toBe(registration.device.id);
     expect(relay.listHostsForUser(registration.user.id)).toEqual([registration.host]);
   });

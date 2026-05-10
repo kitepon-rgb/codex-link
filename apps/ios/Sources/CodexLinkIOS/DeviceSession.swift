@@ -4,6 +4,7 @@ public struct CodexLinkDeviceSession: Codable, Equatable, Sendable {
     public let relayUrl: String
     public let userId: String
     public let deviceId: String
+    public let deviceToken: String
     public let displayName: String
     public let deviceName: String
 
@@ -11,12 +12,14 @@ public struct CodexLinkDeviceSession: Codable, Equatable, Sendable {
         relayUrl: String,
         userId: String,
         deviceId: String,
+        deviceToken: String,
         displayName: String,
         deviceName: String
     ) {
         self.relayUrl = relayUrl
         self.userId = userId
         self.deviceId = deviceId
+        self.deviceToken = deviceToken
         self.displayName = displayName
         self.deviceName = deviceName
     }
@@ -114,14 +117,16 @@ public protocol CodexLinkDeviceSessionPairing: Sendable {
     func pairHost(
         pairingCode: String,
         userId: String,
-        deviceId: String
+        deviceId: String,
+        deviceToken: String
     ) async throws -> CodexLinkDevicePairingResult
 }
 
 public protocol CodexLinkDeviceSessionRevoking: Sendable {
     func revokeDevice(
         userId: String,
-        deviceId: String
+        deviceId: String,
+        deviceToken: String
     ) async throws -> CodexLinkDeviceRevocationResult
 }
 
@@ -221,7 +226,8 @@ public final class CodexLinkDeviceSessionClient: @unchecked Sendable {
     public func pairHost(
         pairingCode: String,
         userId: String,
-        deviceId: String
+        deviceId: String,
+        deviceToken: String
     ) async throws -> CodexLinkDevicePairingResult {
         let requestBody = CodexLinkDevicePairingRequest(
             userId: userId,
@@ -231,6 +237,7 @@ public final class CodexLinkDeviceSessionClient: @unchecked Sendable {
         var request = URLRequest(url: try devicePairingURL())
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "authorization")
         request.httpBody = try encoder.encode(requestBody)
 
         let (data, response) = try await session.data(for: request)
@@ -245,7 +252,8 @@ public final class CodexLinkDeviceSessionClient: @unchecked Sendable {
 
     public func revokeDevice(
         userId: String,
-        deviceId: String
+        deviceId: String,
+        deviceToken: String
     ) async throws -> CodexLinkDeviceRevocationResult {
         let requestBody = CodexLinkDeviceRevocationRequest(
             userId: userId,
@@ -254,6 +262,7 @@ public final class CodexLinkDeviceSessionClient: @unchecked Sendable {
         var request = URLRequest(url: try deviceRevocationURL())
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "authorization")
         request.httpBody = try encoder.encode(requestBody)
 
         let (data, response) = try await session.data(for: request)

@@ -8,6 +8,7 @@ export {
 } from "./errors.js";
 export { RelayService } from "./relay.js";
 export type {
+  DeviceCredentialIssue,
   DeviceRevocation,
   HostAccessGrant,
   HostAccessRevocation,
@@ -21,6 +22,7 @@ export type {
 export { createRelayState } from "./state.js";
 export type {
   CachedRelayEvent,
+  DeviceCredential,
   HostPairingCode,
   RelayAuditEvent,
   RelayAuditOutcome,
