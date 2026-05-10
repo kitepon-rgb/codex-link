@@ -94,6 +94,14 @@ export type ApprovalDecisionKind =
   | "decline"
   | "cancel";
 
+export type DiagnosticSeverity = "info" | "warning" | "error";
+
+export interface DiagnosticEvent {
+  scope: "host" | "relay" | "codex";
+  severity: DiagnosticSeverity;
+  message: string;
+}
+
 export interface ApprovalDecision {
   requestId: RequestId;
   decision: ApprovalDecisionKind;
@@ -139,6 +147,7 @@ export type CodexLinkEvent =
   | { type: "approval.requested"; request: ApprovalRequest }
   | { type: "approval.resolved"; requestId: RequestId; decision: ApprovalDecisionKind }
   | { type: "rate_limit.updated"; userId: UserId; usedPercent: number | null }
+  | { type: "diagnostic.reported"; diagnostic: DiagnosticEvent }
   | { type: "error.reported"; scope: "host" | "relay" | "codex"; message: string };
 
 export interface LiveActivityState {

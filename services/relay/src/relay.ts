@@ -9,12 +9,15 @@ import type {
   User,
   UserId,
 } from "@codex-link/protocol";
-import { RelayAuthzError, RelayNotFoundError } from "./errors.js";
+import { randomBytes } from "node:crypto";
+import { RelayAuthzError, RelayError, RelayNotFoundError } from "./errors.js";
 import { createId } from "./id.js";
 import type { RelayConfig } from "./config.js";
 import { loadRelayConfig } from "./config.js";
-import type { CachedRelayEvent, RelayState } from "./state.js";
+import type { CachedRelayEvent, HostPairingCode, RelayState } from "./state.js";
 import { createRelayState } from "./state.js";
+
+const DEFAULT_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
 
 export interface RoutedHostMessage {
   hostId: HostId;
@@ -32,6 +35,23 @@ export interface HostBootstrapRegistration {
   user: User;
   device: Device;
   host: Host;
+}
+
+export interface PlaceholderDeviceSession {
+  user: User;
+  device: Device;
+}
+
+export interface HostPairingGrant {
+  user: User;
+  device: Device;
+  host: Host;
+  access: HostAccess;
+}
+
+export interface HostEventReplay {
+  events: CachedRelayEvent[];
+  latestSequence: number;
 }
 
 export class RelayService {
@@ -95,6 +115,64 @@ export class RelayService {
     const device = this.registerDevice(user.id, input.hostName, "mac-host");
     const host = this.registerHost(user.id, device.id, input.hostName);
     return { user, device, host };
+  }
+
+  registerPlaceholderIphoneSession(displayName: string, deviceName: string): PlaceholderDeviceSession {
+    const user = this.loginPlaceholder(displayName);
+    const device = this.registerDevice(user.id, deviceName, "iphone");
+    return { user, device };
+  }
+
+  createHostPairingCode(
+    hostId: HostId,
+    options: { now?: Date; ttlMs?: number } = {},
+  ): HostPairingCode {
+    this.requireHost(hostId);
+    const now = options.now ?? new Date();
+    const ttlMs = options.ttlMs ?? DEFAULT_PAIRING_CODE_TTL_MS;
+    const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
+    let code = formatPairingCode(randomBytes(4).toString("hex"));
+    while (this.state.hostPairingCodes.has(normalizePairingCode(code))) {
+      code = formatPairingCode(randomBytes(4).toString("hex"));
+    }
+    const pairingCode: HostPairingCode = {
+      code,
+      hostId,
+      createdAt: now.toISOString(),
+      expiresAt,
+      consumedAt: null,
+    };
+    this.state.hostPairingCodes.set(normalizePairingCode(code), pairingCode);
+    return pairingCode;
+  }
+
+  redeemHostPairingCode(input: {
+    userId: UserId;
+    deviceId: DeviceId;
+    pairingCode: string;
+    now?: Date;
+  }): HostPairingGrant {
+    const user = this.requireUser(input.userId);
+    const device = this.requireDevice(input.deviceId);
+    if (device.revokedAt) {
+      throw new RelayAuthzError("Revoked device cannot pair");
+    }
+    if (device.userId !== user.id || device.kind !== "iphone") {
+      throw new RelayAuthzError("Pairing requires the user's iPhone device");
+    }
+    const pairingCode = this.requirePairingCode(input.pairingCode);
+    if (pairingCode.consumedAt) {
+      throw new RelayAuthzError("Host pairing code has already been used");
+    }
+    const now = input.now ?? new Date();
+    if (Date.parse(pairingCode.expiresAt) <= now.getTime()) {
+      throw new RelayAuthzError("Host pairing code has expired");
+    }
+
+    pairingCode.consumedAt = now.toISOString();
+    const host = this.requireHost(pairingCode.hostId);
+    const access = this.grantHostAccess(host.id, user.id, "operator");
+    return { user, device, host, access };
   }
 
   grantHostAccess(hostId: HostId, userId: UserId, role: HostAccess["role"]): HostAccess {
@@ -189,11 +267,15 @@ export class RelayService {
       receivedAt: new Date().toISOString(),
     };
     const events = this.state.eventCache.get(hostId) ?? [];
-    events.push(cached);
-    this.state.eventCache.set(
-      hostId,
-      events.slice(-this.config.eventCacheLimitPerHost),
-    );
+    const limit = Math.max(0, this.config.eventCacheLimitPerHost);
+    const nextEvents = [...events, cached];
+    const retainedEvents = limit === 0 ? [] : nextEvents.slice(-limit);
+    const droppedEvents = nextEvents.slice(0, nextEvents.length - retainedEvents.length);
+    const latestDropped = droppedEvents.at(-1);
+    if (latestDropped) {
+      this.state.eventCacheDroppedThrough.set(hostId, latestDropped.sequence);
+    }
+    this.state.eventCache.set(hostId, retainedEvents);
     return cached;
   }
 
@@ -202,6 +284,25 @@ export class RelayService {
     return (this.state.eventCache.get(hostId) ?? []).filter(
       (event) => event.sequence > afterSequence,
     );
+  }
+
+  readHostEventReplay(userId: UserId, hostId: HostId, afterSequence = 0): HostEventReplay {
+    this.assertHostAccess(userId, hostId);
+    const events = this.state.eventCache.get(hostId) ?? [];
+    const droppedThroughSequence = this.state.eventCacheDroppedThrough.get(hostId) ?? 0;
+    const latestSequence = events.at(-1)?.sequence ?? afterSequence;
+
+    if (afterSequence > 0 && afterSequence < droppedThroughSequence) {
+      throw new RelayError(
+        `Host event cache dropped events through sequence ${droppedThroughSequence}; cannot replay after sequence ${afterSequence}`,
+        "HOST_EVENT_CACHE_GAP",
+      );
+    }
+
+    return {
+      events: events.filter((event) => event.sequence > afterSequence),
+      latestSequence: Math.max(afterSequence, latestSequence),
+    };
   }
 
   assertHostAccess(userId: UserId, hostId: HostId): HostAccess {
@@ -243,4 +344,22 @@ export class RelayService {
     }
     return host;
   }
+
+  private requirePairingCode(code: string): HostPairingCode {
+    const normalizedCode = normalizePairingCode(code);
+    const pairingCode = this.state.hostPairingCodes.get(normalizedCode);
+    if (!pairingCode) {
+      throw new RelayAuthzError("Invalid Host pairing code");
+    }
+    return pairingCode;
+  }
+}
+
+function normalizePairingCode(code: string): string {
+  return code.replace(/[\s-]/g, "").toUpperCase();
+}
+
+function formatPairingCode(rawCode: string): string {
+  const normalized = normalizePairingCode(rawCode).slice(0, 8);
+  return `${normalized.slice(0, 4)}-${normalized.slice(4)}`;
 }

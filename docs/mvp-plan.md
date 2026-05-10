@@ -159,8 +159,12 @@ docs/
 - [x] Relay `host.event` / Codex Link event decoder を作る。
 - [x] transcript / timeline / approval / LiveActivityState projection を作る。
 - [x] Host へ送る turn / restore command encoder を作る。
-- [ ] MVP device session / placeholder login。production auth は Phase 7。
-- [ ] 起動時に前回の Host / Project / Thread を復元し、可能なら conversation screen から開始する。
+- [x] MVP device session / placeholder login。production auth は Phase 7。
+  - Relay は `/api/device-session` で placeholder iPhone device session を発行する。
+  - iPhone core は `CodexLinkDeviceSessionClient` で device session を登録できる。
+- [x] 起動時に前回の Host / Project / Thread を復元し、可能なら conversation screen から開始する。
+  - `CodexLinkStartupRestorer` が保存済み bookmark を読み、Relay cache 復元後の selection を返す。
+  - 実 app lifecycle への接続は後続の app target binding で扱う。
 - [x] 初回、切替、アクセス不能時の Host list UI。
 - [x] Host 選択 UI。
 - [x] Project / Thread drawer UI。
@@ -178,33 +182,64 @@ docs/
 - [x] thinking / running tools の詳細状態を timeline projection から status strip / timeline に表示する。
 - [x] Host picker / running / approval / offline の Preview 状態を用意する。
 - [x] reconnect 後に使う Host / Project / Thread / Relay sequence bookmark と復元ロジック。
-- [ ] reconnect 後に Relay event cache を購読し、visible session state を実 WebSocket で復元する。
+- [x] reconnect 後に Relay event cache を購読し、visible session state を実 WebSocket で復元する。
+  - Relay は `host.subscription.ready` で cache replay の完了点を明示する。
+  - iPhone client は bookmark の `lastRelaySequence` 以降を購読し、projection / selection / bookmark を更新する。
 - [x] 基本的な approval UI。
 - [x] transcript projection を表示する。
 - [x] timeline / activity projection を折りたたみ可能に表示する。
 - [x] approval request を thread / turn / item 単位で表示する。
 - [x] debug / inspector への導線を通常 UI と分ける。
+- [x] 実 iOS app target で placeholder login、startup restore、Relay WebSocket action binding を app lifecycle に接続する。
+  - `CodexLinkAppViewModel` が placeholder device session 登録、保存 bookmark からの startup restore、Relay receive loop、UI action send を接続する。
+  - `CodexLinkApp` target は `CodexLinkRootView`、Relay lifecycle、Live Activity sync、deep link を接続する。
+- [x] 新規 iPhone device session に既存 HostAccess を付与する MVP pairing flow を作る。
+  - Host WebSocket は `host.pairingCode.create` で短命かつ一回限りの pairing code を発行できる。
+  - iPhone app は Host picker から pairing code を redeem し、Relay の `/api/device-session/pair` で対象 Host への `operator` HostAccess を受け取る。
+  - redeem 後は `client.subscribeHost` で対象 Host の event cache を購読し、Host / Project / Thread 表示に入る。
+  - これは MVP placeholder pairing であり、本物の authentication、device revocation、ACL sharing は Phase 7。
 
 ## Phase 5: Live Activity MVP
 
 - [x] LiveActivityState を定義する。
-- [ ] iOS app target 側に ActivityKit attributes を定義する。
-- [ ] running turn 用に Live Activity を開始する。
-- [ ] status を更新する。
-- [ ] approval-required state を表示する。
-- [ ] completed/failed/canceled で終了する。
-- [ ] active turn へタップで戻れるようにする。
+- [x] iOS app / widget target から使う ActivityKit attributes を定義する。
+  - `CodexLinkTurnActivityAttributes` は SwiftPM module 内で iOS 条件付きにして、app target / widget extension から import する。
+- [x] running turn 用に Live Activity を開始する。
+  - `CodexLinkLiveActivityController.sync(...)` が visible selection / projection から running turn を開始する。
+- [x] status を更新する。
+  - 同じ active turn の snapshot は existing activity に update する。
+- [x] approval-required state を表示する。
+  - Activity content state と WidgetKit 表示で `approvalRequired` を強調する。
+- [x] completed/failed/canceled で終了する。
+  - terminal turn status は final content 付きで Activity を end する。
+- [x] active turn へタップで戻れるようにする。
+  - `codexlink://thread?...` deep link を生成し、Live Activity widget に `widgetURL` として渡す。
+- [x] 実 iOS app target / widget extension を追加し、`sync(...)` と `onOpenURL` を実アプリ lifecycle に接続する。
+  - `CodexLink.xcodeproj` に `CodexLinkApp` と `CodexLinkWidgets` を追加。
 
 ## Phase 6: Event-native UX 統合と検証
 
 - [x] Codex events を Codex Link events に正規化する。
 - [x] transcript projection を追加する。
 - [x] timeline projection を追加する。
-- [ ] 通常の reconnect でユーザーに見える log gap が出ないことを確認する。
-- [ ] raw logs/debug data を通常 UI にそのまま出さない。
-- [ ] reconnect state を追加する。
-- [ ] `thread/compact/start` を UI に出す条件を決める。
-- [ ] `thread/rollback` を UI に出す条件を決める。
+- [x] 通常の reconnect でユーザーに見える log gap が出ないことを確認する。
+  - Relay は `client.subscribeHost.afterSequence` から続く cached event を replay し、`host.subscription.ready.latestSequence` を返す。
+  - `afterSequence` の次 event が cache から落ちている場合は、成功扱いせず `HOST_EVENT_CACHE_GAP` を返す。iPhone app はこれを接続失敗として通常 UI に出す。
+- [x] raw logs/debug data を通常 UI にそのまま出さない。
+  - Codex `warning` / `deprecationNotice` / `mcpServer/startupStatus/updated` は `diagnostic.reported` に分離する。
+  - iPhone projection は diagnostics を transcript / timeline と別に保持する。
+- [x] reconnect state を追加する。
+  - `CodexLinkConnectionState` を UI state として定義し、status strip に接続状態を出す。
+  - Preview に reconnecting state を追加する。
+- [x] `thread/compact/start` を UI に出す条件を決める。
+  - MVP の通常 composer には manual compact ボタンを出さない。
+  - app-server が `context_compaction` / `compaction` item を通知した場合だけ、Host が `Context compaction` timeline item として投影する。
+  - manual compact 実行 UI は、Host 側 command と local smoke が追加された後、debug / inspector 側で selected thread があり active turn が running / waiting approval ではない場合に限定する。
+- [x] `thread/rollback` を UI に出す条件を決める。
+  - MVP の通常 UI には rollback 操作を出さない。
+  - 実装する場合は、`thread/rollback` の local smoke、Host command、rollback 後の `thread/read` / `thread/turns/list` 再投影が揃った後に限る。
+  - 入口は debug / inspector 側に限定し、selected thread、rollback 対象 turn 数、実行後に失われる表示範囲を明示してから実行する。
+  - 未検証の rollback / inject 挙動を、既存の conversation 操作として扱わない。
 
 ## Phase 7: Multi-user hardening
 

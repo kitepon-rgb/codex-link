@@ -112,6 +112,70 @@ describe("Codex app-server event normalization", () => {
     ]);
   });
 
+  it("projects context compaction as timeline activity instead of transcript text", () => {
+    expect(
+      codexNotificationToEvents(
+        {
+          method: "item/started",
+          params: {
+            threadId: "thread_1",
+            turnId: "turn_1",
+            item: { id: "item_compact", type: "context_compaction" },
+          },
+        },
+        projectId,
+      ),
+    ).toEqual([
+      {
+        type: "timeline.item.started",
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "item_compact",
+        label: "Context compaction",
+      },
+    ]);
+  });
+
+  it("separates Codex diagnostics from normal transcript and timeline events", () => {
+    expect(
+      codexNotificationToEvents(
+        {
+          method: "warning",
+          params: { message: "MCP server failed to start" },
+        },
+        projectId,
+      ),
+    ).toEqual([
+      {
+        type: "diagnostic.reported",
+        diagnostic: {
+          scope: "codex",
+          severity: "warning",
+          message: "MCP server failed to start",
+        },
+      },
+    ]);
+
+    expect(
+      codexNotificationToEvents(
+        {
+          method: "deprecationNotice",
+          params: { message: "old method" },
+        },
+        projectId,
+      ),
+    ).toEqual([
+      {
+        type: "diagnostic.reported",
+        diagnostic: {
+          scope: "codex",
+          severity: "info",
+          message: "old method",
+        },
+      },
+    ]);
+  });
+
   it("normalizes app-server responses into Codex Link events", () => {
     expect(
       threadStartResponseToEvent(

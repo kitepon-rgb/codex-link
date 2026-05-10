@@ -28,6 +28,9 @@ export type RelayClientMessage =
   | {
       type: "host.event";
       event: CodexLinkEvent;
+    }
+  | {
+      type: "host.pairingCode.create";
     };
 
 export type RelayServerMessage =
@@ -48,6 +51,18 @@ export type RelayServerMessage =
   | {
       type: "host.event";
       event: CachedRelayEvent;
+    }
+  | {
+      type: "host.subscription.ready";
+      hostId: HostId;
+      afterSequence: number;
+      latestSequence: number;
+    }
+  | {
+      type: "host.pairingCode.created";
+      hostId: HostId;
+      code: string;
+      expiresAt: string;
     };
 
 interface HostSession {
@@ -192,14 +207,22 @@ export class RelayWebSocketGateway {
     const message = parseClientMessage(raw);
     if (message.type === "client.subscribeHost") {
       this.relay.assertHostAccess(session.userId, message.hostId);
-      session.subscriptions.add(message.hostId);
-      for (const event of this.relay.readHostEvents(
+      const afterSequence = message.afterSequence ?? 0;
+      const replay = this.relay.readHostEventReplay(
         session.userId,
         message.hostId,
-        message.afterSequence,
-      )) {
+        afterSequence,
+      );
+      session.subscriptions.add(message.hostId);
+      for (const event of replay.events) {
         this.send(session.socket, { type: "host.event", event });
       }
+      this.send(session.socket, {
+        type: "host.subscription.ready",
+        hostId: message.hostId,
+        afterSequence,
+        latestSequence: replay.latestSequence,
+      });
       return;
     }
     if (message.type === "client.toHost") {
@@ -213,11 +236,22 @@ export class RelayWebSocketGateway {
 
   private handleHostMessage(session: HostSession, raw: string): void {
     const message = parseClientMessage(raw);
-    if (message.type !== "host.event") {
-      throw new RelayError("Host connection only accepts host.event", "BAD_HOST_MESSAGE");
+    if (message.type === "host.event") {
+      const cached = this.relay.appendHostEvent(session.hostId, message.event);
+      this.broadcastHostEvent(session.hostId, cached);
+      return;
     }
-    const cached = this.relay.appendHostEvent(session.hostId, message.event);
-    this.broadcastHostEvent(session.hostId, cached);
+    if (message.type === "host.pairingCode.create") {
+      const pairingCode = this.relay.createHostPairingCode(session.hostId);
+      this.send(session.socket, {
+        type: "host.pairingCode.created",
+        hostId: session.hostId,
+        code: pairingCode.code,
+        expiresAt: pairingCode.expiresAt,
+      });
+      return;
+    }
+    throw new RelayError("Host connection only accepts host.event or host.pairingCode.create", "BAD_HOST_MESSAGE");
   }
 
   private broadcastHostEvent(hostId: HostId, event: CachedRelayEvent): void {
@@ -282,11 +316,54 @@ interface HostBootstrapRequest {
   };
 }
 
+interface DeviceSessionRequest {
+  displayName?: unknown;
+  deviceName?: unknown;
+}
+
+interface DeviceSessionPairRequest {
+  userId?: unknown;
+  deviceId?: unknown;
+  pairingCode?: unknown;
+}
+
 async function handleHttpRequest(
   relay: RelayService,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
+  if (request.method === "POST" && request.url === "/api/device-session") {
+    const body = (await readJson(request)) as DeviceSessionRequest;
+    const displayName = requiredString(body.displayName, "displayName");
+    const deviceName = requiredString(body.deviceName, "deviceName");
+    const session = relay.registerPlaceholderIphoneSession(displayName, deviceName);
+    writeJson(response, 201, {
+      relayUrl: relay.getPublicBaseUrl(),
+      userId: session.user.id,
+      deviceId: session.device.id,
+      displayName: session.user.displayName,
+      deviceName: session.device.name,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/device-session/pair") {
+    const body = (await readJson(request)) as DeviceSessionPairRequest;
+    const userId = requiredString(body.userId, "userId") as UserId;
+    const deviceId = requiredString(body.deviceId, "deviceId") as DeviceId;
+    const pairingCode = requiredString(body.pairingCode, "pairingCode");
+    const grant = relay.redeemHostPairingCode({ userId, deviceId, pairingCode });
+    writeJson(response, 201, {
+      relayUrl: relay.getPublicBaseUrl(),
+      userId: grant.user.id,
+      deviceId: grant.device.id,
+      hostId: grant.host.id,
+      hostName: grant.host.name,
+      role: grant.access.role,
+    });
+    return;
+  }
+
   if (request.method === "POST" && request.url === "/api/host-bootstrap") {
     const body = (await readJson(request)) as HostBootstrapRequest;
     const ownerDisplayName = requiredString(body.ownerDisplayName, "ownerDisplayName");

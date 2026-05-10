@@ -122,7 +122,42 @@ export function codexNotificationToEvents(
     return [{ type: "error.reported", scope: "codex", message: messageText }];
   }
 
+  const diagnostic = codexDiagnosticNotificationToEvent(message);
+  if (diagnostic) {
+    return [diagnostic];
+  }
+
   return [];
+}
+
+export function codexDiagnosticNotificationToEvent(
+  message: JsonRpcNotification,
+): CodexLinkEvent | null {
+  const params = objectValue(message.params);
+  if (!params) {
+    return null;
+  }
+
+  if (
+    message.method === "warning" ||
+    message.method === "guardianWarning" ||
+    message.method === "configWarning"
+  ) {
+    return diagnosticEvent("warning", diagnosticMessage(params));
+  }
+
+  if (message.method === "deprecationNotice") {
+    return diagnosticEvent("info", diagnosticMessage(params));
+  }
+
+  if (message.method === "mcpServer/startupStatus/updated") {
+    const status = stringValue(params.status) ?? stringValue(params.state);
+    const serverName = stringValue(params.serverName) ?? stringValue(params.name) ?? "MCP server";
+    const messageText = [serverName, status].filter(Boolean).join(": ");
+    return diagnosticEvent("info", messageText || JSON.stringify(params));
+  }
+
+  return null;
 }
 
 export function threadReadResponseToEvents(
@@ -507,6 +542,9 @@ function itemLabel(item: Record<string, unknown> | null): string {
   if (type === "reasoning") {
     return "Reasoning";
   }
+  if (type === "context_compaction" || type === "compaction") {
+    return "Context compaction";
+  }
   return type ?? "Timeline item";
 }
 
@@ -525,6 +563,29 @@ function fileChangeApprovalDetail(params: Record<string, unknown>): string {
     stringValue(params.reason),
   ].filter(Boolean);
   return parts.join("\n") || "File change requires approval";
+}
+
+function diagnosticEvent(
+  severity: "info" | "warning" | "error",
+  message: string,
+): CodexLinkEvent {
+  return {
+    type: "diagnostic.reported",
+    diagnostic: {
+      scope: "codex",
+      severity,
+      message,
+    },
+  };
+}
+
+function diagnosticMessage(params: Record<string, unknown>): string {
+  return (
+    stringValue(params.message) ??
+    stringValue(params.summary) ??
+    stringValue(params.title) ??
+    JSON.stringify(params)
+  );
 }
 
 function decisionsFromCodex(value: unknown): ApprovalDecisionKind[] {

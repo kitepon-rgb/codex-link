@@ -19,7 +19,18 @@ public struct CodexLinkSessionSelection: Equatable, Sendable {
     }
 }
 
+public enum CodexLinkConnectionState: String, Codable, Equatable, Sendable {
+    case disconnected
+    case connecting
+    case connected
+    case reconnecting
+    case restoring
+    case restored
+    case failed
+}
+
 public enum CodexLinkUIAction: Equatable, Sendable {
+    case pairHost(pairingCode: String)
     case selectHost(hostId: String)
     case selectProject(projectId: String)
     case selectThread(projectId: String, threadId: String)

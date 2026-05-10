@@ -4,16 +4,19 @@ import SwiftUI
 struct CodexLinkPreviewCanvas: View {
     @State private var projection: CodexLinkProjection
     @State private var selection: CodexLinkSessionSelection
+    private let connectionState: CodexLinkConnectionState
 
     init(state: CodexLinkPreviewState = .approval) {
         let fixture = CodexLinkPreviewData.fixture(state: state)
         self._projection = State(initialValue: fixture.projection)
         self._selection = State(initialValue: fixture.selection)
+        self.connectionState = fixture.connectionState
     }
 
     var body: some View {
         CodexLinkRootView(
             projection: projection,
+            connectionState: connectionState,
             selection: $selection,
             onAction: handle
         )
@@ -66,7 +69,7 @@ struct CodexLinkPreviewCanvas: View {
         case .selectThread(let projectId, let threadId), .restoreThread(let projectId, let threadId):
             selection.projectId = projectId
             selection.threadId = threadId
-        case .showHostSwitcher, .showInspector, .unsupportedOperation:
+        case .pairHost, .showHostSwitcher, .showInspector, .unsupportedOperation:
             break
         }
     }
@@ -76,12 +79,14 @@ enum CodexLinkPreviewState {
     case hostPicker
     case running
     case approval
+    case reconnecting
     case offline
 }
 
 struct CodexLinkPreviewFixture {
     var projection: CodexLinkProjection
     var selection: CodexLinkSessionSelection
+    var connectionState: CodexLinkConnectionState
 }
 
 enum CodexLinkPreviewData {
@@ -94,10 +99,13 @@ enum CodexLinkPreviewData {
             activeTurnId: state == .hostPicker ? nil : "turn_2"
         )
 
+        let connectionState: CodexLinkConnectionState
         switch state {
         case .hostPicker:
+            connectionState = .connected
             break
         case .running:
+            connectionState = .connected
             projection.apply(.turnStatusChanged(turnId: "turn_2", status: .running))
             projection.apply(.timelineItemStarted(
                 threadId: "thread_1",
@@ -111,6 +119,7 @@ enum CodexLinkPreviewData {
                 text: "テストを実行しています。"
             ))
         case .approval:
+            connectionState = .connected
             projection.apply(.turnStatusChanged(turnId: "turn_2", status: .waitingForApproval))
             projection.apply(.timelineItemStarted(
                 threadId: "thread_1",
@@ -128,7 +137,22 @@ enum CodexLinkPreviewData {
                 detail: "swift test\ncwd: ~/Developer/codex-link/apps/ios",
                 availableDecisions: [.accept, .acceptForSession, .decline]
             )))
+        case .reconnecting:
+            connectionState = .reconnecting
+            projection.apply(.turnStatusChanged(turnId: "turn_2", status: .running))
+            projection.apply(.timelineItemStarted(
+                threadId: "thread_1",
+                turnId: "turn_2",
+                itemId: "timeline_1",
+                label: "Relay event cache restore"
+            ))
+            projection.apply(.assistantDelta(
+                threadId: "thread_1",
+                turnId: "turn_2",
+                text: "接続を復元しています。"
+            ))
         case .offline:
+            connectionState = .failed
             projection.apply(.turnStatusChanged(turnId: "turn_2", status: .failed))
             projection.apply(.timelineItemStarted(
                 threadId: "thread_1",
@@ -145,7 +169,11 @@ enum CodexLinkPreviewData {
             projection.apply(.errorReported(scope: "relay", message: "Host connection lost"))
         }
 
-        return CodexLinkPreviewFixture(projection: projection, selection: selection)
+        return CodexLinkPreviewFixture(
+            projection: projection,
+            selection: selection,
+            connectionState: connectionState
+        )
     }
 
     private static func baseProjection(hostStatus: HostStatus) -> CodexLinkProjection {
@@ -216,6 +244,11 @@ enum CodexLinkPreviewData {
 
 #Preview("Host Picker") {
     CodexLinkPreviewCanvas(state: .hostPicker)
+        .frame(width: 390, height: 844)
+}
+
+#Preview("Reconnecting") {
+    CodexLinkPreviewCanvas(state: .reconnecting)
         .frame(width: 390, height: 844)
 }
 

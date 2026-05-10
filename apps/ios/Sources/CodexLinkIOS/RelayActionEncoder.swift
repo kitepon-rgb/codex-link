@@ -19,6 +19,8 @@ public struct CodexLinkRelayActionEncoder: Sendable {
         afterSequence: Int? = nil
     ) throws -> Data {
         switch action {
+        case .pairHost:
+            throw CodexLinkRelayActionEncodingError.localOnlyAction("pairHost")
         case .selectHost(let hostId):
             return try encoder.encode(ClientSubscribeHostMessage(
                 hostId: hostId,

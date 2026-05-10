@@ -56,7 +56,7 @@ public struct ThreadRef: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-public enum TurnStatus: String, Codable, Equatable, Sendable {
+public enum TurnStatus: String, Codable, Equatable, Hashable, Sendable {
     case idle
     case running
     case waitingForApproval = "waiting_for_approval"
@@ -179,5 +179,24 @@ public struct LiveActivityState: Equatable, Sendable {
         self.status = status
         self.latestText = latestText
         self.approvalRequired = approvalRequired
+    }
+}
+
+public enum DiagnosticSeverity: String, Codable, Equatable, Sendable {
+    case info
+    case warning
+    case error
+}
+
+public struct DiagnosticEvent: Codable, Equatable, Identifiable, Sendable {
+    public var id: String { "\(scope)-\(severity.rawValue)-\(message)" }
+    public let scope: String
+    public let severity: DiagnosticSeverity
+    public let message: String
+
+    public init(scope: String, severity: DiagnosticSeverity, message: String) {
+        self.scope = scope
+        self.severity = severity
+        self.message = message
     }
 }

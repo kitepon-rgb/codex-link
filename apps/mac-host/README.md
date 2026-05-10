@@ -7,6 +7,7 @@ MVP で扱うもの:
 - 一発インストール
 - Relay への Host 登録
 - Relay への outbound 接続
+- iPhone pairing code の発行
 - ローカル project の公開
 - `codex app-server` stdio 起動
 - Codex app-server event の Codex Link event への正規化
@@ -26,7 +27,7 @@ Phase 3 の最初として、Host の最小 package を置いています。
 - `src/codex.ts`: `codex app-server` stdio 起動と `initialize` / `initialized` handshake。
 - `src/codex-events.ts`: app-server notification / server request / thread read response を Codex Link event へ正規化。
 - `src/session.ts`: Relay からの turn 操作、thread 復元、approval decision command を app-server request / response へ変換。
-- `src/relay-client.ts`: Relay への outbound WebSocket 接続と Host 向け message 受信。
+- `src/relay-client.ts`: Relay への outbound WebSocket 接続、Host 向け message 受信、短命 pairing code 発行 request。
 - `scripts/install.sh`: 一発セットアップ用の設定ファイル生成 script。
 
 ## セットアップ placeholder
@@ -56,3 +57,5 @@ apps/mac-host/scripts/install.sh
 ```bash
 pnpm --filter @codex-link/mac-host exec codex-link-mac-host ~/.codex-link/host.json
 ```
+
+起動時に `Codex Link iPhone pairing code: ABCD-EF12 (...)` の形で短命 code を表示します。iPhone app の Host picker でこの code を入力すると、MVP placeholder device session にその Host への `operator` HostAccess が付与されます。

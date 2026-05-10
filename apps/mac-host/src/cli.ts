@@ -30,6 +30,10 @@ runner = new MacHostSessionRunner({ config, codex, relay });
 
 await relay.connect();
 await relay.announce();
+const pairingCode = await relay.createPairingCode();
+console.log(
+  `Codex Link iPhone pairing code: ${pairingCode.code} (expires ${pairingCode.expiresAt})`,
+);
 relay.sendHostEvent({
   type: "host.capabilities.updated",
   hostId: config.hostId,

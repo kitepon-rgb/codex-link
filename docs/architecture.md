@@ -122,6 +122,8 @@ iPhone app は Relay に接続し、認可された Host を選びます。
 
 Relay は、現在のユーザーがその Host にアクセスできる場合だけメッセージをルーティングします。
 
+MVP の初回接続では、Mac Host が Relay WebSocket 上で短命 pairing code を発行し、iPhone app がその code を redeem して対象 Host への HostAccess を受け取ります。Relay は pairing 後も Host 一覧を ACL で filter し、グローバル Host 一覧は返しません。
+
 ## プロトコル境界
 
 iPhone app は raw Codex app-server JSON-RPC を直接話しません。

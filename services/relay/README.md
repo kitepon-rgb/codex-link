@@ -9,6 +9,7 @@ Relay が担当するもの:
 - Host 登録
 - Host online / offline
 - HostAccess による認可
+- 短命 Host pairing code による MVP HostAccess 付与
 - iPhone と Host のルーティング
 - 再接続用の短いイベントキャッシュ
 - 最小限の監査メタデータ
@@ -27,8 +28,8 @@ Relay がしないもの:
 
 Phase 2 では、DB や HTTP server を入れる前に、Relay の中心ルールを TypeScript のインメモリ service として置いています。
 
-- `src/relay.ts`: User / Device / Host / HostAccess / Connection / event cache の操作。
-- `src/websocket.ts`: Host / iPhone placeholder WebSocket gateway と Host bootstrap HTTP API。
+- `src/relay.ts`: User / Device / Host / HostAccess / Connection / event cache / Host pairing code の操作。
+- `src/websocket.ts`: Host / iPhone placeholder WebSocket gateway、Host bootstrap HTTP API、device session pairing API。
 - `src/state.ts`: インメモリ状態。
 - `src/config.ts`: Relay ドメインと event cache limit の設定。
 - `test/relay.test.ts`: Host 一覧の ACL filter と Host route 認可のテスト。
@@ -55,6 +56,38 @@ request:
     "name": "Codex Link",
     "path": "/Users/kite/Developer/codex-link"
   }
+}
+```
+
+## Device Session / Pairing API
+
+iPhone app は `POST /api/device-session` で MVP placeholder device session を作ります。
+
+```json
+{
+  "displayName": "owner",
+  "deviceName": "Owner iPhone"
+}
+```
+
+Host は Relay WebSocket 接続後に `host.pairingCode.create` を送ると、Relay から `host.pairingCode.created` を受け取ります。
+
+```json
+{
+  "type": "host.pairingCode.created",
+  "hostId": "host_1",
+  "code": "ABCD-EF12",
+  "expiresAt": "2026-05-10T00:10:00.000Z"
+}
+```
+
+iPhone app は `POST /api/device-session/pair` で code を redeem します。成功すると、対象 Host への `operator` HostAccess が付与されます。code は短命かつ一回限りです。
+
+```json
+{
+  "userId": "usr_2",
+  "deviceId": "dev_2",
+  "pairingCode": "ABCD-EF12"
 }
 ```
 
@@ -100,5 +133,7 @@ iPhone client:
 ```text
 ws://localhost:3000/relay?kind=client&deviceId=<deviceId>&userId=<userId>
 ```
+
+Client は `client.subscribeHost` に `afterSequence` を付けると、Relay はその続きの cached Host events を replay してから `host.subscription.ready` を返します。要求された sequence の続きが cache から落ちている場合、Relay は `HOST_EVENT_CACHE_GAP` を返し、欠落した timeline を成功扱いしません。
 
 これは本物の認証ではありません。Phase 2 の目的は、WebSocket 経由でも HostAccess 認可を必ず通すことを固定することです。

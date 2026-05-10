@@ -9,6 +9,7 @@ public struct CodexLinkProjection: Equatable, Sendable {
     public private(set) var timeline: [TimelineItem] = []
     public private(set) var approvals: [ApprovalRequest] = []
     public private(set) var finalResponses: [String: String] = [:]
+    public private(set) var diagnostics: [DiagnosticEvent] = []
     public private(set) var latestError: String?
 
     public init() {}
@@ -52,6 +53,8 @@ public struct CodexLinkProjection: Equatable, Sendable {
             approvals.removeAll { $0.id == requestId }
         case .rateLimitUpdated:
             break
+        case .diagnosticReported(let diagnostic):
+            diagnostics.append(diagnostic)
         case .errorReported(_, let message):
             latestError = message
         }

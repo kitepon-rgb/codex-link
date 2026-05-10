@@ -3,15 +3,18 @@ import SwiftUI
 @available(iOS 17.0, macOS 14.0, *)
 public struct CodexLinkRootView: View {
     private let projection: CodexLinkProjection
+    private let connectionState: CodexLinkConnectionState
     @Binding private var selection: CodexLinkSessionSelection
     private let onAction: (CodexLinkUIAction) -> Void
 
     public init(
         projection: CodexLinkProjection,
+        connectionState: CodexLinkConnectionState = .connected,
         selection: Binding<CodexLinkSessionSelection>,
         onAction: @escaping (CodexLinkUIAction) -> Void
     ) {
         self.projection = projection
+        self.connectionState = connectionState
         self._selection = selection
         self.onAction = onAction
     }
@@ -22,11 +25,13 @@ public struct CodexLinkRootView: View {
                 HostPickerView(
                     hosts: sortedHosts,
                     projectsByHost: projection.projectsByHost,
-                    select: selectHost
+                    select: selectHost,
+                    pair: pairHost
                 )
             } else {
                 SessionScreen(
                     projection: projection,
+                    connectionState: connectionState,
                     selection: $selection,
                     onAction: onAction
                 )
@@ -57,6 +62,10 @@ public struct CodexLinkRootView: View {
         selection.activeTurnId = nil
         onAction(.selectHost(hostId: host.id))
     }
+
+    private func pairHost(_ pairingCode: String) {
+        onAction(.pairHost(pairingCode: pairingCode))
+    }
 }
 
 @available(iOS 17.0, macOS 14.0, *)
@@ -64,9 +73,34 @@ private struct HostPickerView: View {
     let hosts: [Host]
     let projectsByHost: [String: [ProjectRef]]
     let select: (Host) -> Void
+    let pair: (String) -> Void
+
+    @State private var pairingCode = ""
 
     var body: some View {
         List {
+            Section("Pair Host") {
+                HStack(spacing: 10) {
+                    TextField("Pairing code", text: $pairingCode)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.characters)
+                        .keyboardType(.asciiCapable)
+                        #endif
+                    Button {
+                        let code = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !code.isEmpty else {
+                            return
+                        }
+                        pair(code)
+                        pairingCode = ""
+                    } label: {
+                        Image(systemName: "link.badge.plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Pair Host")
+                }
+            }
             ForEach(hosts) { host in
                 Button {
                     select(host)
@@ -112,6 +146,7 @@ private struct HostPickerView: View {
 @available(iOS 17.0, macOS 14.0, *)
 private struct SessionScreen: View {
     let projection: CodexLinkProjection
+    let connectionState: CodexLinkConnectionState
     @Binding var selection: CodexLinkSessionSelection
     let onAction: (CodexLinkUIAction) -> Void
 
@@ -123,6 +158,7 @@ private struct SessionScreen: View {
         VStack(spacing: 0) {
             StatusStrip(
                 host: selectedHost,
+                connectionState: connectionState,
                 status: currentStatus,
                 latestActivity: latestActivity,
                 latestError: projection.latestError
@@ -303,6 +339,7 @@ private struct SessionScreen: View {
 @available(iOS 17.0, macOS 14.0, *)
 private struct StatusStrip: View {
     let host: Host?
+    let connectionState: CodexLinkConnectionState
     let status: TurnStatus
     let latestActivity: TimelineItem?
     let latestError: String?
@@ -312,6 +349,13 @@ private struct StatusStrip: View {
             Label(hostStatusText, systemImage: hostIcon)
                 .foregroundStyle(hostColor)
                 .lineLimit(1)
+            if connectionState != .connected {
+                StatusPill(
+                    text: connectionText,
+                    icon: connectionIcon,
+                    color: connectionColor
+                )
+            }
             StatusPill(text: statusText, icon: statusIcon, color: statusColor)
             if let latestActivity {
                 Label(latestActivity.label, systemImage: activityIcon(for: latestActivity.status))
@@ -345,6 +389,57 @@ private struct StatusStrip: View {
             return "No host"
         }
         return host.name
+    }
+
+    private var connectionText: String {
+        switch connectionState {
+        case .disconnected:
+            return "Disconnected"
+        case .connecting:
+            return "Connecting"
+        case .connected:
+            return "Connected"
+        case .reconnecting:
+            return "Reconnecting"
+        case .restoring:
+            return "Restoring"
+        case .restored:
+            return "Restored"
+        case .failed:
+            return "Connection failed"
+        }
+    }
+
+    private var connectionIcon: String {
+        switch connectionState {
+        case .disconnected:
+            return "wifi.slash"
+        case .connecting:
+            return "antenna.radiowaves.left.and.right"
+        case .connected:
+            return "wifi"
+        case .reconnecting:
+            return "arrow.triangle.2.circlepath"
+        case .restoring:
+            return "clock.arrow.circlepath"
+        case .restored:
+            return "checkmark.icloud"
+        case .failed:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    private var connectionColor: Color {
+        switch connectionState {
+        case .disconnected:
+            return .secondary
+        case .connecting, .reconnecting, .restoring:
+            return .teal
+        case .connected, .restored:
+            return .green
+        case .failed:
+            return .red
+        }
     }
 
     private var statusText: String {
@@ -646,7 +741,6 @@ private struct ThreadDrawer: View {
                             selection.threadId = thread.id
                             selection.projectId = thread.projectId
                             selection.activeTurnId = nil
-                            onAction(.selectThread(projectId: thread.projectId, threadId: thread.id))
                             onAction(.restoreThread(projectId: thread.projectId, threadId: thread.id))
                             dismiss()
                         } label: {

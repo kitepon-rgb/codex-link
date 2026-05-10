@@ -47,6 +47,64 @@ describe("RelayService", () => {
     });
   });
 
+  it("grants HostAccess by redeeming a one-time Host pairing code", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const guest = relay.loginPlaceholder("guest");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const guestIphone = relay.registerDevice(guest.id, "Guest iPhone", "iphone");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    const pairingCode = relay.createHostPairingCode(host.id, {
+      now: new Date("2026-05-10T00:00:00Z"),
+      ttlMs: 60_000,
+    });
+
+    const grant = relay.redeemHostPairingCode({
+      userId: guest.id,
+      deviceId: guestIphone.id,
+      pairingCode: pairingCode.code.toLowerCase(),
+      now: new Date("2026-05-10T00:00:10Z"),
+    });
+
+    expect(grant).toMatchObject({
+      user: { id: guest.id },
+      device: { id: guestIphone.id },
+      host: { id: host.id },
+      access: { hostId: host.id, userId: guest.id, role: "operator" },
+    });
+    expect(relay.listHostsForUser(guest.id)).toEqual([host]);
+    expect(() =>
+      relay.redeemHostPairingCode({
+        userId: guest.id,
+        deviceId: guestIphone.id,
+        pairingCode: pairingCode.code,
+      }),
+    ).toThrow("already been used");
+  });
+
+  it("rejects expired Host pairing codes", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const guest = relay.loginPlaceholder("guest");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const guestIphone = relay.registerDevice(guest.id, "Guest iPhone", "iphone");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    const pairingCode = relay.createHostPairingCode(host.id, {
+      now: new Date("2026-05-10T00:00:00Z"),
+      ttlMs: 60_000,
+    });
+
+    expect(() =>
+      relay.redeemHostPairingCode({
+        userId: guest.id,
+        deviceId: guestIphone.id,
+        pairingCode: pairingCode.code,
+        now: new Date("2026-05-10T00:02:00Z"),
+      }),
+    ).toThrow("expired");
+    expect(relay.listHostsForUser(guest.id)).toEqual([]);
+  });
+
   it("keeps a bounded event cache per Host", () => {
     const relay = new RelayService(undefined, {
       publicBaseUrl: "http://relay.test",
@@ -64,6 +122,57 @@ describe("RelayService", () => {
     expect(relay.readHostEvents(owner.id, host.id).map((event) => event.sequence)).toEqual([
       2, 3,
     ]);
+  });
+
+  it("rejects replay when the requested sequence has fallen out of the Host event cache", () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 2,
+      hostBootstrapToken: null,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+
+    const first = relay.appendHostEvent(host.id, { type: "host.online", host });
+    relay.appendHostEvent(host.id, { type: "host.offline", hostId: host.id });
+    relay.appendHostEvent(host.id, { type: "host.online", host });
+    relay.appendHostEvent(host.id, { type: "host.offline", hostId: host.id });
+
+    expect(() => relay.readHostEventReplay(owner.id, host.id, first.sequence)).toThrow(
+      "cannot replay after sequence",
+    );
+  });
+
+  it("does not treat other Hosts' global sequence numbers as a replay gap", () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 1,
+      hostBootstrapToken: null,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const firstDevice = relay.registerDevice(owner.id, "First Mac", "mac-host");
+    const secondDevice = relay.registerDevice(owner.id, "Second Mac", "mac-host");
+    const firstHost = relay.registerHost(owner.id, firstDevice.id, "First MacBook");
+    const secondHost = relay.registerHost(owner.id, secondDevice.id, "Second MacBook");
+
+    const firstHostEvent = relay.appendHostEvent(firstHost.id, {
+      type: "host.online",
+      host: firstHost,
+    });
+    relay.appendHostEvent(secondHost.id, { type: "host.online", host: secondHost });
+    relay.appendHostEvent(secondHost.id, { type: "host.offline", hostId: secondHost.id });
+    const nextFirstHostEvent = relay.appendHostEvent(firstHost.id, {
+      type: "host.offline",
+      hostId: firstHost.id,
+    });
+
+    expect(
+      relay.readHostEventReplay(owner.id, firstHost.id, firstHostEvent.sequence),
+    ).toEqual({
+      events: [nextFirstHostEvent],
+      latestSequence: nextFirstHostEvent.sequence,
+    });
   });
 
   it("registers a Host through bootstrap token", () => {

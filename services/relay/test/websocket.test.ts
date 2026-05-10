@@ -112,12 +112,94 @@ describe("Relay WebSocket gateway", () => {
       hostId: host.id,
     });
 
-    expect(await clientSocket.read()).toMatchObject({
+    const event = await clientSocket.read();
+    expect(event).toMatchObject({
       type: "host.event",
       event: {
         hostId: host.id,
         event: { type: "host.offline", hostId: host.id },
       },
+    });
+    expect(await clientSocket.read()).toEqual({
+      type: "host.subscription.ready",
+      hostId: host.id,
+      afterSequence: 0,
+      latestSequence: event.type === "host.event" ? event.event.sequence : 0,
+    });
+  });
+
+  it("replays only events after the requested sequence and marks subscription readiness", async () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const first = relay.appendHostEvent(host.id, { type: "host.offline", hostId: host.id });
+    const second = relay.appendHostEvent(host.id, {
+      type: "project.list.updated",
+      hostId: host.id,
+      projects: [],
+    });
+    const baseUrl = await startRelay(relay, servers);
+
+    const clientSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=client&deviceId=${iphone.id}&userId=${owner.id}`,
+    );
+    await clientSocket.read();
+    clientSocket.send({
+      type: "client.subscribeHost",
+      hostId: host.id,
+      afterSequence: first.sequence,
+    });
+
+    expect(await clientSocket.read()).toMatchObject({
+      type: "host.event",
+      event: {
+        sequence: second.sequence,
+        hostId: host.id,
+      },
+    });
+    expect(await clientSocket.read()).toEqual({
+      type: "host.subscription.ready",
+      hostId: host.id,
+      afterSequence: first.sequence,
+      latestSequence: second.sequence,
+    });
+  });
+
+  it("reports an explicit cache gap instead of accepting a lossy Host subscription", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 2,
+      hostBootstrapToken: null,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const first = relay.appendHostEvent(host.id, { type: "host.online", host });
+    relay.appendHostEvent(host.id, { type: "host.offline", hostId: host.id });
+    relay.appendHostEvent(host.id, {
+      type: "project.list.updated",
+      hostId: host.id,
+      projects: [],
+    });
+    relay.appendHostEvent(host.id, { type: "host.offline", hostId: host.id });
+    const baseUrl = await startRelay(relay, servers);
+
+    const clientSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=client&deviceId=${iphone.id}&userId=${owner.id}`,
+    );
+    await clientSocket.read();
+    clientSocket.send({
+      type: "client.subscribeHost",
+      hostId: host.id,
+      afterSequence: first.sequence,
+    });
+
+    expect(await clientSocket.read()).toMatchObject({
+      type: "relay.error",
+      code: "HOST_EVENT_CACHE_GAP",
     });
   });
 
@@ -157,6 +239,112 @@ describe("Relay WebSocket gateway", () => {
     expect(relay.listHostsForUser(body.userId as never)).toMatchObject([
       { id: body.hostId, deviceId: body.deviceId, name: "Owner MacBook" },
     ]);
+  });
+
+  it("registers placeholder iPhone device sessions through HTTP API", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+    });
+    const baseUrl = await startRelay(relay, servers);
+
+    const response = await fetch(`${baseUrl.replace("ws://", "http://")}/api/device-session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        displayName: "owner",
+        deviceName: "Owner iPhone",
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      relayUrl: string;
+      userId: string;
+      deviceId: string;
+      displayName: string;
+      deviceName: string;
+    };
+    expect(body).toMatchObject({
+      relayUrl: "http://relay.test",
+      displayName: "owner",
+      deviceName: "Owner iPhone",
+    });
+
+    const clientSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=client&deviceId=${body.deviceId}&userId=${body.userId}`,
+    );
+    expect(await clientSocket.read()).toMatchObject({
+      type: "relay.ready",
+      role: "client",
+    });
+  });
+
+  it("pairs a placeholder iPhone device session to a Host with a Host-generated code", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const baseUrl = await startRelay(relay, servers);
+
+    const hostSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=host&deviceId=${mac.id}&hostId=${host.id}`,
+    );
+    await hostSocket.read();
+    hostSocket.send({ type: "host.pairingCode.create" });
+    const pairingMessage = await hostSocket.read();
+    expect(pairingMessage).toMatchObject({
+      type: "host.pairingCode.created",
+      hostId: host.id,
+    });
+    if (pairingMessage.type !== "host.pairingCode.created") {
+      throw new Error("Expected host.pairingCode.created");
+    }
+
+    const deviceResponse = await fetch(`${baseUrl.replace("ws://", "http://")}/api/device-session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        displayName: "owner",
+        deviceName: "Owner iPhone",
+      }),
+    });
+    const device = (await deviceResponse.json()) as { userId: string; deviceId: string };
+
+    const pairResponse = await fetch(`${baseUrl.replace("ws://", "http://")}/api/device-session/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: device.userId,
+        deviceId: device.deviceId,
+        pairingCode: pairingMessage.code,
+      }),
+    });
+
+    expect(pairResponse.status).toBe(201);
+    await expect(pairResponse.json()).resolves.toMatchObject({
+      hostId: host.id,
+      hostName: "Owner MacBook",
+      role: "operator",
+    });
+
+    const clientSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=client&deviceId=${device.deviceId}&userId=${device.userId}`,
+    );
+    await clientSocket.read();
+    clientSocket.send({ type: "client.subscribeHost", hostId: host.id });
+    expect(await clientSocket.read()).toMatchObject({
+      type: "host.event",
+      event: {
+        hostId: host.id,
+        event: { type: "host.online" },
+      },
+    });
   });
 });
 

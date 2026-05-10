@@ -9,8 +9,9 @@ export type { CodexAppServerCapabilities, MacHostCapabilities } from "./capabili
 export { startMacHostCodexAppServer } from "./codex.js";
 export type { StartMacHostCodexAppServerOptions } from "./codex.js";
 export { MacHostRelayClient } from "./relay-client.js";
-export type { MacHostRelayClientOptions } from "./relay-client.js";
+export type { MacHostPairingCode, MacHostRelayClientOptions } from "./relay-client.js";
 export {
+  codexDiagnosticNotificationToEvent,
   codexNotificationToEvents,
   codexServerRequestToEvent,
   threadListResponseToEvents,

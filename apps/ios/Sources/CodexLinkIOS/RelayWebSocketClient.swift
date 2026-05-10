@@ -5,9 +5,27 @@ public enum CodexLinkRelayClientError: Error, Equatable, Sendable {
     case localOnlyAction(String)
     case unsupportedAction(String)
     case unsupportedWebSocketMessage
+    case relayError(code: String, message: String)
+    case subscriptionHostMismatch(expected: String, actual: String)
 }
 
-public final class CodexLinkRelayWebSocketClient {
+public struct CodexLinkWebSocketRestoreResult: Equatable, Sendable {
+    public var projection: CodexLinkProjection
+    public var selection: CodexLinkSessionSelection
+    public var bookmark: CodexLinkSessionBookmark
+
+    public init(
+        projection: CodexLinkProjection,
+        selection: CodexLinkSessionSelection,
+        bookmark: CodexLinkSessionBookmark
+    ) {
+        self.projection = projection
+        self.selection = selection
+        self.bookmark = bookmark
+    }
+}
+
+public final class CodexLinkRelayWebSocketClient: @unchecked Sendable {
     private let relayURL: URL
     private let userId: String
     private let deviceId: String
@@ -58,6 +76,74 @@ public final class CodexLinkRelayWebSocketClient {
 
     public func send(_ data: Data) async throws {
         try await requireTask().send(.data(data))
+    }
+
+    public func subscribeHost(hostId: String, afterSequence: Int? = nil) async throws {
+        let data = try actionEncoder.encode(
+            .selectHost(hostId: hostId),
+            currentHostId: hostId,
+            afterSequence: afterSequence
+        )
+        try await send(data)
+    }
+
+    public func restoreVisibleSession(
+        from bookmark: CodexLinkSessionBookmark,
+        startingProjection: CodexLinkProjection = CodexLinkProjection()
+    ) async throws -> CodexLinkWebSocketRestoreResult {
+        guard let hostId = bookmark.hostId else {
+            let selection = CodexLinkSessionRestore.selection(
+                from: bookmark,
+                projection: startingProjection
+            )
+            return CodexLinkWebSocketRestoreResult(
+                projection: startingProjection,
+                selection: selection,
+                bookmark: bookmark
+            )
+        }
+
+        try await subscribeHost(hostId: hostId, afterSequence: bookmark.lastRelaySequence)
+
+        var projection = startingProjection
+        var restoredBookmark = bookmark
+        while true {
+            let message = try await receive()
+            switch message {
+            case .ready:
+                continue
+            case .hostEvent(let cached):
+                projection.apply(cached.event)
+                restoredBookmark.lastRelaySequence = max(
+                    restoredBookmark.lastRelaySequence ?? 0,
+                    cached.sequence
+                )
+            case .hostSubscriptionReady(let readyHostId, _, let latestSequence):
+                guard readyHostId == hostId else {
+                    throw CodexLinkRelayClientError.subscriptionHostMismatch(
+                        expected: hostId,
+                        actual: readyHostId
+                    )
+                }
+                restoredBookmark.lastRelaySequence = max(
+                    restoredBookmark.lastRelaySequence ?? 0,
+                    latestSequence
+                )
+                let selection = CodexLinkSessionRestore.selection(
+                    from: restoredBookmark,
+                    projection: projection
+                )
+                return CodexLinkWebSocketRestoreResult(
+                    projection: projection,
+                    selection: selection,
+                    bookmark: restoredBookmark
+                )
+            case .error(let code, let message):
+                throw CodexLinkRelayClientError.relayError(code: code, message: message)
+            case .hostMessage:
+                throw CodexLinkRelayClientError.unsupportedWebSocketMessage
+            }
+        }
     }
 
     public func receive() async throws -> RelayServerMessage {

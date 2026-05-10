@@ -9,9 +9,16 @@ export interface MacHostRelayClientOptions {
   onHostMessage?: (payload: unknown) => void;
 }
 
+export interface MacHostPairingCode {
+  hostId: string;
+  code: string;
+  expiresAt: string;
+}
+
 export class MacHostRelayClient {
   private socket: WebSocket | null = null;
   private readonly WebSocketImpl: typeof WebSocket;
+  private pairingCodeResolver: ((pairingCode: MacHostPairingCode) => void) | null = null;
 
   constructor(private readonly options: MacHostRelayClientOptions) {
     this.WebSocketImpl = options.WebSocketImpl ?? WebSocket;
@@ -64,6 +71,19 @@ export class MacHostRelayClient {
     this.socket.send(JSON.stringify({ type: "host.event", event }));
   }
 
+  createPairingCode(): Promise<MacHostPairingCode> {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error("Relay WebSocket is not open");
+    }
+    if (this.pairingCodeResolver) {
+      throw new Error("Host pairing code request is already in flight");
+    }
+    this.socket.send(JSON.stringify({ type: "host.pairingCode.create" }));
+    return new Promise((resolve) => {
+      this.pairingCodeResolver = resolve;
+    });
+  }
+
   buildRelayUrl(): string {
     const url = new URL(this.options.config.relayUrl);
     url.pathname = joinPath(url.pathname, "relay");
@@ -93,6 +113,20 @@ export class MacHostRelayClient {
       message &&
       typeof message === "object" &&
       "type" in message &&
+      message.type === "host.pairingCode.created"
+    ) {
+      const pairingCode = pairingCodeMessage(message);
+      const resolve = this.pairingCodeResolver;
+      this.pairingCodeResolver = null;
+      if (pairingCode) {
+        resolve?.(pairingCode);
+      }
+      return;
+    }
+    if (
+      message &&
+      typeof message === "object" &&
+      "type" in message &&
       message.type === "host.message" &&
       "message" in message
     ) {
@@ -100,6 +134,24 @@ export class MacHostRelayClient {
       this.options.onHostMessage?.(routed.payload);
     }
   }
+}
+
+function pairingCodeMessage(message: object): MacHostPairingCode | null {
+  if (!("hostId" in message) || !("code" in message) || !("expiresAt" in message)) {
+    return null;
+  }
+  if (
+    typeof message.hostId !== "string" ||
+    typeof message.code !== "string" ||
+    typeof message.expiresAt !== "string"
+  ) {
+    return null;
+  }
+  return {
+    hostId: message.hostId,
+    code: message.code,
+    expiresAt: message.expiresAt,
+  };
 }
 
 function joinPath(basePath: string, child: string): string {

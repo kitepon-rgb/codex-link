@@ -11,6 +11,7 @@ public enum RelayServerMessage: Equatable, Sendable {
     case ready(role: String, connectionId: String)
     case error(code: String, message: String)
     case hostEvent(CachedRelayEvent)
+    case hostSubscriptionReady(hostId: String, afterSequence: Int, latestSequence: Int)
     case hostMessage(payload: Data)
 }
 
@@ -22,6 +23,9 @@ extension RelayServerMessage: Decodable {
         case code
         case message
         case event
+        case hostId
+        case afterSequence
+        case latestSequence
     }
 
     public init(from decoder: Decoder) throws {
@@ -40,6 +44,12 @@ extension RelayServerMessage: Decodable {
             )
         case "host.event":
             self = .hostEvent(try container.decode(CachedRelayEvent.self, forKey: .event))
+        case "host.subscription.ready":
+            self = .hostSubscriptionReady(
+                hostId: try container.decode(String.self, forKey: .hostId),
+                afterSequence: try container.decode(Int.self, forKey: .afterSequence),
+                latestSequence: try container.decode(Int.self, forKey: .latestSequence)
+            )
         case "host.message":
             self = .hostMessage(payload: Data())
         default:
@@ -78,6 +88,7 @@ public enum CodexLinkEvent: Equatable, Sendable {
     case approvalRequested(ApprovalRequest)
     case approvalResolved(requestId: String, decision: ApprovalDecisionKind)
     case rateLimitUpdated
+    case diagnosticReported(DiagnosticEvent)
     case errorReported(scope: String, message: String)
 }
 
@@ -99,6 +110,7 @@ extension CodexLinkEvent: Codable {
         case request
         case requestId
         case decision
+        case diagnostic
         case scope
         case message
     }
@@ -169,6 +181,10 @@ extension CodexLinkEvent: Codable {
             )
         case "rate_limit.updated":
             self = .rateLimitUpdated
+        case "diagnostic.reported":
+            self = .diagnosticReported(
+                try container.decode(DiagnosticEvent.self, forKey: .diagnostic)
+            )
         case "error.reported":
             self = .errorReported(
                 scope: try container.decode(String.self, forKey: .scope),
