@@ -137,19 +137,22 @@ public struct TimelineItem: Equatable, Identifiable, Sendable {
     public let turnId: String
     public var label: String
     public var status: TimelineStatus
+    public var detail: String?
 
     public init(
         id: String,
         threadId: String,
         turnId: String,
         label: String,
-        status: TimelineStatus
+        status: TimelineStatus,
+        detail: String? = nil
     ) {
         self.id = id
         self.threadId = threadId
         self.turnId = turnId
         self.label = label
         self.status = status
+        self.detail = detail
     }
 }
 

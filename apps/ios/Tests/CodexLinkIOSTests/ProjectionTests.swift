@@ -201,6 +201,43 @@ final class ProjectionTests: XCTestCase {
         )
     }
 
+    func testDecodesTimelineDetail() throws {
+        let json = """
+        {
+          "type": "host.event",
+          "event": {
+            "sequence": 2,
+            "hostId": "host_1",
+            "receivedAt": "2026-05-10T00:00:00Z",
+            "event": {
+              "type": "timeline.item.started",
+              "threadId": "thread_1",
+              "turnId": "turn_1",
+              "itemId": "item_file",
+              "label": "File change",
+              "detail": "update: README.md\\n+hello"
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let message = try JSONDecoder().decode(RelayServerMessage.self, from: json)
+
+        guard case .hostEvent(let cached) = message else {
+            return XCTFail("Expected host.event")
+        }
+        XCTAssertEqual(
+            cached.event,
+            .timelineItemStarted(
+                threadId: "thread_1",
+                turnId: "turn_1",
+                itemId: "item_file",
+                label: "File change",
+                detail: "update: README.md\n+hello"
+            )
+        )
+    }
+
     func testDecodesApprovalResolvedWithoutDecision() throws {
         let json = """
         {
@@ -281,7 +318,8 @@ final class ProjectionTests: XCTestCase {
             threadId: "thread_1",
             turnId: "turn_1",
             itemId: "item_command",
-            label: "pnpm test"
+            label: "pnpm test",
+            detail: "read access: /repo"
         ))
         projection.apply(.approvalRequested(ApprovalRequest(
             id: "approval_1",
@@ -296,6 +334,7 @@ final class ProjectionTests: XCTestCase {
 
         XCTAssertEqual(projection.transcript.map(\.text), ["Hello"])
         XCTAssertEqual(projection.timeline.first?.status, .running)
+        XCTAssertEqual(projection.timeline.first?.detail, "read access: /repo")
         XCTAssertEqual(projection.approvals.map(\.id), ["approval_1"])
 
         let liveActivity = projection.liveActivityState(

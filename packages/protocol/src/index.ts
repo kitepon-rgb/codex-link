@@ -136,6 +136,7 @@ export type CodexLinkEvent =
       turnId: TurnId;
       itemId: ItemId;
       label: string;
+      detail?: string;
     }
   | {
       type: "timeline.item.completed";

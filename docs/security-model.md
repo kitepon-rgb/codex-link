@@ -160,14 +160,23 @@ Relay は承認 request / response を中継してよいですが、承認の意
 - 承認 decision は accept / acceptForSession / decline / cancel など、app-server が要求する decision に対応づける。
 - `serverRequest/resolved` を受けたら、iPhone 側の承認 UI を必ず解決済みにする。
 
+MVP の詳細表示:
+
+- command approval は command、cwd、reason、network destination、追加 filesystem / network permission、policy amendment を Host で整形して表示する。
+- file change approval request 自体に diff が含まれない場合は diff を捏造しない。app-server が `item/fileChange/patchUpdated` または復元済み `fileChange` item として出した diff を timeline detail として表示する。
+- network approval は少なくとも protocol / host を表示する。port が app-server payload にない場合は表示しない。
+- permissions approval は cwd、reason、requested network permission、requested filesystem read / write / entry scope を表示する。
+- detail が長い場合、Host は表示用に切り詰めたことを明示したうえで event payload を bounded に保つ。
+- iPhone app と Relay は承認 request を独自 timeout で成功/失敗扱いしない。timeout、cancellation、別経路での解決は app-server の `serverRequest/resolved` を Host が `approval.resolved` に変換し、decision が不明な場合は decision を省略して UI だけを解決済みにする。
+
 MVP TODO:
 
 - [x] command execution approval の基本表示内容を定義する。`docs/ui-design.md` の Approval UI を参照。
 - [x] file change approval の基本表示内容を定義する。`docs/ui-design.md` の Approval UI を参照。
 - [x] network approval の基本表示内容を定義する。`docs/ui-design.md` の Approval UI を参照。
 - [x] `tool/requestUserInput` の基本表示内容を定義する。`docs/ui-design.md` の Approval UI を参照。
-- [ ] file diff / network destination / requested permissions の詳細表示仕様を詰める。
-- [ ] 承認 request timeout / cancellation の扱いを定義する。
+- [x] file diff / network destination / requested permissions の詳細表示仕様を詰める。
+- [x] 承認 request timeout / cancellation の扱いを定義する。
 
 ## 非目標
 

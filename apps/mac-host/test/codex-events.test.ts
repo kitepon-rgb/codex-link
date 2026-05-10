@@ -78,6 +78,32 @@ describe("Codex app-server event normalization", () => {
         label: "pwd",
       },
     ]);
+
+    expect(
+      codexNotificationToEvents(
+        {
+          method: "item/fileChange/patchUpdated",
+          params: {
+            threadId: "thread_1",
+            turnId: "turn_1",
+            itemId: "item_file",
+            changes: [
+              { path: "README.md", kind: "update", diff: "@@\n+hello" },
+            ],
+          },
+        },
+        projectId,
+      ),
+    ).toEqual([
+      {
+        type: "timeline.item.started",
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "item_file",
+        label: "File change",
+        detail: "update: README.md\n@@\n+hello",
+      },
+    ]);
   });
 
   it("records completed assistant messages as transcript and final response events", () => {
@@ -293,15 +319,67 @@ describe("Codex app-server event normalization", () => {
           networkApprovalContext: { host: "example.com" },
         },
       }),
-    ).toMatchObject({ request: { kind: "network" } });
+    ).toMatchObject({
+      request: {
+        kind: "network",
+        detail: "network: example.com",
+      },
+    });
 
     expect(
       codexServerRequestToEvent({
         id: "approval_3",
         method: "item/fileChange/requestApproval",
-        params: { threadId: "thread_1", turnId: "turn_1", itemId: "item_2" },
+        params: {
+          threadId: "thread_1",
+          turnId: "turn_1",
+          itemId: "item_2",
+          grantRoot: "/repo/tmp",
+          reason: "Need to write generated output",
+        },
       }),
-    ).toMatchObject({ request: { kind: "file_change" } });
+    ).toMatchObject({
+      request: {
+        kind: "file_change",
+        detail: "grant root: /repo/tmp\nNeed to write generated output",
+      },
+    });
+
+    expect(
+      codexServerRequestToEvent({
+        id: "approval_5",
+        method: "item/permissions/requestApproval",
+        params: {
+          threadId: "thread_1",
+          turnId: "turn_1",
+          itemId: "item_4",
+          cwd: "/repo",
+          reason: "Need broader project access",
+          permissions: {
+            network: { enabled: true },
+            fileSystem: {
+              read: ["/repo/docs"],
+              write: ["/repo/tmp"],
+              entries: [
+                { access: "write", path: { type: "glob_pattern", pattern: "/repo/*.md" } },
+              ],
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      request: {
+        kind: "network",
+        detail: [
+          "cwd: /repo",
+          "Need broader project access",
+          "network permission: enabled",
+          "read access: /repo/docs",
+          "write access: /repo/tmp",
+          "write access: glob:/repo/*.md",
+        ].join("\n"),
+      },
+    });
 
     expect(
       codexServerRequestToEvent({

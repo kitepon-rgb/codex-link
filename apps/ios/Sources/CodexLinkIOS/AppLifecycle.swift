@@ -352,7 +352,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
         case .assistantDelta(let threadId, let turnId, _),
              .assistantFinal(let threadId, let turnId, _, _),
              .transcriptItemRecorded(let threadId, let turnId, _, _, _),
-             .timelineItemStarted(let threadId, let turnId, _, _),
+             .timelineItemStarted(let threadId, let turnId, _, _, _),
              .timelineItemCompleted(let threadId, let turnId, _, _):
             hint = (threadId, turnId)
         case .approvalRequested(let request):

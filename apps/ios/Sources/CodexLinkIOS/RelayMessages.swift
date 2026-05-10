@@ -78,7 +78,13 @@ public enum CodexLinkEvent: Equatable, Sendable {
         role: TranscriptRole,
         text: String
     )
-    case timelineItemStarted(threadId: String, turnId: String, itemId: String, label: String)
+    case timelineItemStarted(
+        threadId: String,
+        turnId: String,
+        itemId: String,
+        label: String,
+        detail: String?
+    )
     case timelineItemCompleted(
         threadId: String,
         turnId: String,
@@ -106,6 +112,7 @@ extension CodexLinkEvent: Codable {
         case text
         case itemId
         case label
+        case detail
         case role
         case request
         case requestId
@@ -164,7 +171,8 @@ extension CodexLinkEvent: Codable {
                 threadId: try container.decode(String.self, forKey: .threadId),
                 turnId: try container.decode(String.self, forKey: .turnId),
                 itemId: try container.decode(String.self, forKey: .itemId),
-                label: try container.decode(String.self, forKey: .label)
+                label: try container.decode(String.self, forKey: .label),
+                detail: try container.decodeIfPresent(String.self, forKey: .detail)
             )
         case "timeline.item.completed":
             self = .timelineItemCompleted(

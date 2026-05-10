@@ -111,7 +111,8 @@ enum CodexLinkPreviewData {
                 threadId: "thread_1",
                 turnId: "turn_2",
                 itemId: "timeline_1",
-                label: "pnpm test"
+                label: "pnpm test",
+                detail: nil
             ))
             projection.apply(.assistantDelta(
                 threadId: "thread_1",
@@ -125,7 +126,8 @@ enum CodexLinkPreviewData {
                 threadId: "thread_1",
                 turnId: "turn_2",
                 itemId: "timeline_1",
-                label: "swift test"
+                label: "swift test",
+                detail: nil
             ))
             projection.apply(.approvalRequested(ApprovalRequest(
                 id: "approval_1",
@@ -144,7 +146,8 @@ enum CodexLinkPreviewData {
                 threadId: "thread_1",
                 turnId: "turn_2",
                 itemId: "timeline_1",
-                label: "Relay event cache restore"
+                label: "Relay event cache restore",
+                detail: nil
             ))
             projection.apply(.assistantDelta(
                 threadId: "thread_1",
@@ -158,7 +161,8 @@ enum CodexLinkPreviewData {
                 threadId: "thread_1",
                 turnId: "turn_2",
                 itemId: "timeline_1",
-                label: "Relay reconnect"
+                label: "Relay reconnect",
+                detail: nil
             ))
             projection.apply(.timelineItemCompleted(
                 threadId: "thread_1",

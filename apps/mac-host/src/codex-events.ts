@@ -91,6 +91,27 @@ export function codexNotificationToEvents(
     ];
   }
 
+  if (message.method === "item/fileChange/patchUpdated") {
+    const itemId = stringValue(params.itemId);
+    const threadId = stringValue(params.threadId);
+    const turnId = stringValue(params.turnId);
+    if (!itemId || !threadId || !turnId) {
+      return [];
+    }
+    const event: Extract<CodexLinkEvent, { type: "timeline.item.started" }> = {
+      type: "timeline.item.started",
+      threadId: threadId as ThreadId,
+      turnId: turnId as TurnId,
+      itemId: itemId as ItemId,
+      label: "File change",
+    };
+    const detail = fileChangesDetail(params.changes);
+    if (detail) {
+      event.detail = detail;
+    }
+    return [event];
+  }
+
   if (message.method === "item/completed") {
     const item = objectValue(params.item);
     const itemId = stringValue(item?.id);
@@ -244,7 +265,7 @@ export function codexServerRequestToEvent(
       turnId: stringValue(params.turnId),
       itemId: stringValue(params.itemId),
       title: "Permission approval",
-      detail: stringValue(params.reason) ?? `cwd: ${String(params.cwd ?? "")}`,
+      detail: permissionsApprovalDetail(params),
       availableDecisions: ["accept", "decline"],
     });
   }
@@ -438,14 +459,21 @@ function itemToTimelineProjectionEvents(
   if (!itemId) {
     return [];
   }
+  const detail = stringValue(item.type) === "fileChange"
+    ? fileChangesDetail(item.changes)
+    : undefined;
+  const startedEvent: Extract<CodexLinkEvent, { type: "timeline.item.started" }> = {
+    type: "timeline.item.started",
+    threadId: threadId as ThreadId,
+    turnId: turnId as TurnId,
+    itemId: itemId as ItemId,
+    label: itemLabel(item),
+  };
+  if (detail) {
+    startedEvent.detail = detail;
+  }
   return [
-    {
-      type: "timeline.item.started",
-      threadId: threadId as ThreadId,
-      turnId: turnId as TurnId,
-      itemId: itemId as ItemId,
-      label: itemLabel(item),
-    },
+    startedEvent,
     {
       type: "timeline.item.completed",
       threadId: threadId as ThreadId,
@@ -557,19 +585,157 @@ function itemLabel(item: Record<string, unknown> | null): string {
 
 function commandApprovalDetail(params: Record<string, unknown>): string {
   const parts = [
+    networkApprovalDetail(params.networkApprovalContext),
     stringValue(params.command),
     stringValue(params.cwd) ? `cwd: ${stringValue(params.cwd)}` : null,
     stringValue(params.reason),
+    permissionProfileDetail(params.additionalPermissions),
+    execPolicyAmendmentDetail(params.proposedExecpolicyAmendment),
+    networkPolicyAmendmentsDetail(params.proposedNetworkPolicyAmendments),
   ].filter(Boolean);
   return parts.join("\n");
 }
 
 function fileChangeApprovalDetail(params: Record<string, unknown>): string {
   const parts = [
-    stringValue(params.grantRoot) ? `grantRoot: ${stringValue(params.grantRoot)}` : null,
+    stringValue(params.grantRoot) ? `grant root: ${stringValue(params.grantRoot)}` : null,
     stringValue(params.reason),
   ].filter(Boolean);
   return parts.join("\n") || "File change requires approval";
+}
+
+function fileChangesDetail(value: unknown): string | undefined {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+  const detail = value
+    .map((change) => {
+      const object = objectValue(change);
+      const path = stringValue(object?.path) ?? "file";
+      const kind = stringValue(object?.kind) ?? "change";
+      const diff = stringValue(object?.diff);
+      return [`${kind}: ${path}`, diff].filter(Boolean).join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+  return truncateDisplayDetail(detail);
+}
+
+function permissionsApprovalDetail(params: Record<string, unknown>): string {
+  const parts = [
+    stringValue(params.cwd) ? `cwd: ${stringValue(params.cwd)}` : null,
+    stringValue(params.reason),
+    permissionProfileDetail(params.permissions),
+  ].filter(Boolean);
+  return parts.join("\n") || "Permission change requires approval";
+}
+
+function networkApprovalDetail(value: unknown): string | null {
+  const context = objectValue(value);
+  if (!context) {
+    return null;
+  }
+  const host = stringValue(context.host);
+  if (!host) {
+    return null;
+  }
+  const protocol = stringValue(context.protocol);
+  return `network: ${protocol ? `${protocol}://` : ""}${host}`;
+}
+
+function permissionProfileDetail(value: unknown): string | null {
+  const profile = objectValue(value);
+  if (!profile) {
+    return null;
+  }
+  const lines: string[] = [];
+  const network = objectValue(profile.network);
+  if (network && typeof network.enabled === "boolean") {
+    lines.push(`network permission: ${network.enabled ? "enabled" : "disabled"}`);
+  } else if (network) {
+    lines.push("network permission requested");
+  }
+
+  const fileSystem = objectValue(profile.fileSystem);
+  if (fileSystem) {
+    lines.push(...pathListDetail("read access", fileSystem.read));
+    lines.push(...pathListDetail("write access", fileSystem.write));
+    const entries = Array.isArray(fileSystem.entries) ? fileSystem.entries : [];
+    for (const entry of entries) {
+      const object = objectValue(entry);
+      const access = stringValue(object?.access);
+      const path = fileSystemPathLabel(object?.path);
+      if (access && path) {
+        lines.push(`${access} access: ${path}`);
+      }
+    }
+  }
+
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
+function pathListDetail(label: string, value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((path) => stringValue(path))
+    .filter((path): path is string => Boolean(path))
+    .map((path) => `${label}: ${path}`);
+}
+
+function fileSystemPathLabel(value: unknown): string | null {
+  const path = objectValue(value);
+  const type = stringValue(path?.type);
+  if (type === "path") {
+    return stringValue(path?.path) ?? null;
+  }
+  if (type === "glob_pattern") {
+    const pattern = stringValue(path?.pattern);
+    return pattern ? `glob:${pattern}` : null;
+  }
+  if (type === "special") {
+    const special = stringValue(path?.value);
+    return special ? `special:${special}` : null;
+  }
+  return null;
+}
+
+function execPolicyAmendmentDetail(value: unknown): string | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  const amendment = value
+    .map((part) => stringValue(part))
+    .filter((part): part is string => Boolean(part))
+    .join(" ");
+  return amendment ? `exec policy amendment: ${amendment}` : null;
+}
+
+function networkPolicyAmendmentsDetail(value: unknown): string | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  const amendments = value
+    .map((entry) => {
+      const object = objectValue(entry);
+      const action = stringValue(object?.action);
+      const host = stringValue(object?.host);
+      return action && host ? `${action} ${host}` : null;
+    })
+    .filter((entry): entry is string => Boolean(entry));
+  return amendments.length > 0 ? `network policy amendment: ${amendments.join(", ")}` : null;
+}
+
+function truncateDisplayDetail(value: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const maxLength = 8000;
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}\n[truncated for display]`;
 }
 
 function diagnosticEvent(

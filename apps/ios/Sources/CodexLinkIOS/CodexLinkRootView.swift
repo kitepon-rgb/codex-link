@@ -639,12 +639,20 @@ private struct TimelinePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(items) { item in
-                HStack(spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
                     Image(systemName: icon(for: item.status))
                         .foregroundStyle(color(for: item.status))
                         .frame(width: 20)
-                    Text(item.label)
-                        .lineLimit(2)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.label)
+                            .lineLimit(2)
+                        if let detail = item.detail, !detail.isEmpty {
+                            Text(detail)
+                                .font(.caption2.monospaced())
+                                .lineLimit(10)
+                                .textSelection(.enabled)
+                        }
+                    }
                     Spacer()
                 }
                 .font(.caption)

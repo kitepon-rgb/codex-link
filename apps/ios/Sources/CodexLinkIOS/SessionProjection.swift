@@ -36,9 +36,16 @@ public struct CodexLinkProjection: Equatable, Sendable {
             recordTranscriptItem(
                 TranscriptItem(id: itemId, threadId: threadId, turnId: turnId, role: role, text: text)
             )
-        case .timelineItemStarted(let threadId, let turnId, let itemId, let label):
+        case .timelineItemStarted(let threadId, let turnId, let itemId, let label, let detail):
             upsertTimelineItem(
-                TimelineItem(id: itemId, threadId: threadId, turnId: turnId, label: label, status: .running)
+                TimelineItem(
+                    id: itemId,
+                    threadId: threadId,
+                    turnId: turnId,
+                    label: label,
+                    status: .running,
+                    detail: detail
+                )
             )
         case .timelineItemCompleted(_, _, let itemId, let status):
             if let index = timeline.firstIndex(where: { $0.id == itemId }) {
