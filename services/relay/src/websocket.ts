@@ -393,6 +393,11 @@ async function handleHttpRequest(
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
+  if (request.method === "GET" && request.url === "/healthz") {
+    writeJson(response, 200, { status: "ok" });
+    return;
+  }
+
   if (request.method === "POST" && request.url === "/api/device-session") {
     relay.checkRateLimit({
       scope: "http.device_session.create",

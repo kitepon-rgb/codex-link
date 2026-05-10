@@ -299,6 +299,16 @@ describe("Relay WebSocket gateway", () => {
     });
   });
 
+  it("serves a health check endpoint for container probes", async () => {
+    const relay = new RelayService();
+    const baseUrl = await startRelay(relay, servers);
+
+    const response = await fetch(`${baseUrl.replace("ws://", "http://")}/healthz`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: "ok" });
+  });
+
   it("rate limits placeholder iPhone device session creation", async () => {
     const relay = new RelayService(undefined, {
       publicBaseUrl: "http://relay.test",

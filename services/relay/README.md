@@ -208,6 +208,8 @@ docker run --rm -p 3000:3000 \
   codex-link-relay
 ```
 
+Container health checks use `GET /healthz`.
+
 ## WebSocket placeholder
 
 MVP skeleton の WebSocket は `/relay` に接続します。
