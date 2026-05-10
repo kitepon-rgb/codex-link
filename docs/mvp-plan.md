@@ -91,6 +91,7 @@ iPhone app
 - [x] protocol sketch を追加する。
 - [x] `packages/protocol` に共有型の入口を作る。
 - [x] `packages/codex-client` に app-server client / schema 生成物の入口を作る。
+- [x] Relay の Docker container deploy 入口を作る。共有サーバーへ直置きしない。
 
 目標構成:
 

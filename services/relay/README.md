@@ -22,7 +22,7 @@ Relay がしないもの:
 - `~/.codex` の保持
 - Codex セッション正本の保持
 
-実装が始まったら、起動方法、環境変数、DB migration、テスト方法をここに追記します。
+共有サーバーへのデプロイは Docker コンテナで行います。サーバーに Node.js アプリを直置きして起動する運用はしません。
 
 ## 現在の実装
 
@@ -186,8 +186,26 @@ WebSocket message payload は `CODEX_LINK_MAX_WEBSOCKET_PAYLOAD_BYTES` を超え
 
 ```bash
 pnpm install
+pnpm --filter @codex-link/relay build
 pnpm --filter @codex-link/relay test
 pnpm --filter @codex-link/relay typecheck
+```
+
+ローカルで Relay HTTP/WebSocket server を起動する場合は、開発確認として以下を使います。本番/共有サーバーでは Docker コンテナで起動してください。
+
+```bash
+pnpm --filter @codex-link/relay build
+PORT=3000 pnpm --filter @codex-link/relay start
+```
+
+Docker image:
+
+```bash
+docker build -f services/relay/Dockerfile -t codex-link-relay .
+docker run --rm -p 3000:3000 \
+  -e CODEX_LINK_RELAY_URL=https://relay.example.com \
+  -e CODEX_LINK_HOST_BOOTSTRAP_TOKEN=<bootstrap-token> \
+  codex-link-relay
 ```
 
 ## WebSocket placeholder
