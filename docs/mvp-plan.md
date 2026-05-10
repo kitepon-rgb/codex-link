@@ -247,7 +247,8 @@ docs/
 - [ ] 本物の authentication。
   - [x] MVP placeholder として、device ごとの bearer credential を発行し、Relay 側は hash だけを保存する。
   - [x] Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke を device credential で保護する。
-  - [ ] 外部 IdP / login、短命 user session、永続 credential storage。
+  - [x] iPhone app の device session bearer token を Keychain に保存する。
+  - [ ] 外部 IdP / login、短命 user session、Host 側 credential storage。
 - [ ] device revocation。
   - [x] MVP placeholder device session の revoke API を作り、revoked device の新規接続、pairing、既存 WebSocket message を Relay で拒否する。
   - [x] MVP device credential と結びついた revocation API にする。
@@ -260,11 +261,15 @@ docs/
 - [ ] audit metadata。
   - [x] Relay 内で Host routing、HostAccess grant / denial、pairing、device registration / revocation の最小 audit metadata を記録する。
   - [x] device credential issue / authentication denial の最小 audit metadata を記録する。
+  - [x] MVP in-memory audit metadata に保持件数上限と filter API を追加する。
   - [ ] production storage / retention / search policy。
 - [ ] rate limits。
   - [x] MVP placeholder として、単一 Relay process 内の in-memory window rate limit を sensitive HTTP / WebSocket route に適用する。
   - [ ] production storage / distributed quota / user plan 別 limit。
-- [ ] relay payloads の privacy model 決定。
+- [x] relay payloads の privacy model 決定。
+  - MVP は broker-readable Relay とする。Host command payload は transient routing のみで保存せず、Host event payload は bounded event cache に保存する。
+  - audit metadata には token、pairing code 本体、Host command payload、Codex prompt 本文、approval payload を残さない。
+  - E2E privacy は未実装として明示する。
 
 ## MVP の非目標
 

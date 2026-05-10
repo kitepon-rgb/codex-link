@@ -4,6 +4,7 @@ export interface RelayConfig {
   hostBootstrapToken: string | null;
   rateLimitWindowMs?: number;
   rateLimitMaxRequestsPerWindow?: number;
+  auditEventLimit?: number;
 }
 
 export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
@@ -22,5 +23,6 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
       env.CODEX_LINK_RATE_LIMIT_MAX_REQUESTS ?? "120",
       10,
     ),
+    auditEventLimit: Number.parseInt(env.CODEX_LINK_AUDIT_EVENT_LIMIT ?? "1000", 10),
   };
 }

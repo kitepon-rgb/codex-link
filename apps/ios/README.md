@@ -57,7 +57,7 @@ xcodebuild -project CodexLink.xcodeproj -scheme CodexLinkApp -destination 'gener
 `CodexLinkApp` の dev Relay 設定は `App/CodexLinkApp/Info.plist` の `CodexLinkRelayURL` です。現在の既定値は Simulator 向けの `http://127.0.0.1:3000` です。
 実機で動かす場合は、iPhone から到達できる Relay URL に変更してください。
 
-新規 iPhone device session は、Relay の `/api/device-session` から `userId`、`deviceId`、`deviceToken` を受け取り、`deviceToken` を WebSocket、pairing、revocation API の bearer credential として使います。Mac Host 起動時に表示される短命 pairing code を Host picker の `Pair Host` へ入力すると、Relay の `/api/device-session/pair` で既存 HostAccess を受け取り、その Host の event cache を購読します。
+新規 iPhone device session は、Relay の `/api/device-session` から `userId`、`deviceId`、`deviceToken` を受け取り、`deviceToken` を WebSocket、pairing、revocation API の bearer credential として使います。実 app lifecycle では device session を Keychain に保存します。`UserDefaults` store はテストや明示的な差し替え用に残しています。Mac Host 起動時に表示される短命 pairing code を Host picker の `Pair Host` へ入力すると、Relay の `/api/device-session/pair` で既存 HostAccess を受け取り、その Host の event cache を購読します。
 これは MVP placeholder pairing と per-device credential です。本物の multi-user authentication、短命 user session、production ACL sharing は Phase 7 で引き続き扱います。
 リアルタイム確認は、Xcode で `Package.swift` を開き、`CodexLinkPreviewCanvas.swift` の `#Preview` を表示すると使えます。
 Preview は conversation approval、running、Host picker、reconnecting、offline の状態を切り替えて確認できます。

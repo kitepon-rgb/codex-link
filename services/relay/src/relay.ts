@@ -29,6 +29,7 @@ import type {
 import { createRelayState } from "./state.js";
 
 const DEFAULT_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_AUDIT_EVENT_LIMIT = 1000;
 
 export type ShareableHostAccessRole = Exclude<HostAccess["role"], "owner">;
 
@@ -97,6 +98,15 @@ export interface HostEventReplay {
 export interface RelayRateLimitResult {
   remaining: number;
   resetAt: string;
+}
+
+export interface RelayAuditEventFilter {
+  action?: string;
+  outcome?: RelayAuditOutcome;
+  userId?: UserId;
+  deviceId?: DeviceId;
+  hostId?: HostId;
+  limit?: number;
 }
 
 export class RelayService {
@@ -622,8 +632,28 @@ export class RelayService {
     return access;
   }
 
-  listAuditEvents(): RelayAuditEvent[] {
-    return [...this.state.auditEvents];
+  listAuditEvents(filter: RelayAuditEventFilter = {}): RelayAuditEvent[] {
+    let events = [...this.state.auditEvents];
+    if (filter.action) {
+      events = events.filter((event) => event.action === filter.action);
+    }
+    if (filter.outcome) {
+      events = events.filter((event) => event.outcome === filter.outcome);
+    }
+    if (filter.userId) {
+      events = events.filter((event) => event.userId === filter.userId);
+    }
+    if (filter.deviceId) {
+      events = events.filter((event) => event.deviceId === filter.deviceId);
+    }
+    if (filter.hostId) {
+      events = events.filter((event) => event.hostId === filter.hostId);
+    }
+    if (filter.limit !== undefined) {
+      const limit = Math.max(0, filter.limit);
+      events = limit === 0 ? [] : events.slice(-limit);
+    }
+    return events;
   }
 
   assertActiveDevice(deviceId: DeviceId): Device {
@@ -739,6 +769,15 @@ export class RelayService {
       event.detail = input.detail;
     }
     this.state.auditEvents.push(event);
+    const configuredLimit = this.config.auditEventLimit ?? DEFAULT_AUDIT_EVENT_LIMIT;
+    const limit = Number.isFinite(configuredLimit)
+      ? Math.max(0, configuredLimit)
+      : DEFAULT_AUDIT_EVENT_LIMIT;
+    if (limit === 0) {
+      this.state.auditEvents.length = 0;
+    } else if (this.state.auditEvents.length > limit) {
+      this.state.auditEvents.splice(0, this.state.auditEvents.length - limit);
+    }
     return event;
   }
 }

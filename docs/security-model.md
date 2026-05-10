@@ -68,17 +68,19 @@ Host ID を知っていることは、認可ではありません。
 
 Host インストーラは設定を自動化してよいですが、未認証の Host を作ってはいけません。一発インストールの結果は、認証済みで、ユーザー所有で、取り消し可能なデバイス登録である必要があります。
 
-MVP の device credential は、device ごとの bearer token です。Host bootstrap と iPhone placeholder device session 作成時に Relay が一度だけ token を返し、Relay 側は token 本体ではなく SHA-256 hash だけを保存します。Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke は `Authorization: Bearer <deviceToken>` を要求します。
+MVP の device credential は、device ごとの bearer token です。Host bootstrap と iPhone placeholder device session 作成時に Relay が一度だけ token を返し、Relay 側は token 本体ではなく SHA-256 hash だけを保存します。iPhone app は device session bearer token を Keychain に保存します。Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke は `Authorization: Bearer <deviceToken>` を要求します。
 
 MVP の iPhone pairing は placeholder 実装です。Host が認証済み WebSocket 接続から短命かつ一回限りの pairing code を発行し、iPhone の認証済み placeholder device session がその code を redeem した場合だけ、対象 Host への `operator` HostAccess を付与します。すでに `owner` HostAccess を持つ user の role は pairing で降格しません。Host ID を知っているだけでは pairing できません。
 
 MVP の device revocation も placeholder 実装です。Relay は revoke API を device credential で保護し、revoke 済み device の新規接続、pairing、既存 WebSocket session からの message を拒否し、active session を切断します。ただし外部 IdP、短命 user session、永続 credential storage はまだありません。
 
-この pairing / revocation / device credential は本物の multi-user authentication の代替ではありません。それらは hardening phase で完成させます。
+この pairing / revocation / device credential は本物の multi-user authentication の代替ではありません。外部 IdP、短命 user session、Host 側 credential storage などは hardening phase で完成させます。
 
 MVP の Host sharing / ACL は、既存 HostAccess の owner role を持つ user だけが `operator` または `viewer` を grant / revoke できる段階です。request body の `ownerUserId` / `ownerDeviceId`、bearer device credential、既存 ACL を照合しますが、production authentication や短命 session credential はまだ未完成です。owner access は sharing API から revoke しません。`viewer` は Host event cache を購読できますが、Host への command routing は `owner` / `operator` だけに許可します。
 
 MVP の rate limit は単一 Relay process 内の in-memory window です。device session creation / pairing / revoke、HostAccess grant / revoke、Host bootstrap、Host pairing code creation、client subscribe / route を対象にします。複数 process で共有される quota、永続化、user plan 別の制御は hardening phase の対象です。
+
+MVP の audit metadata は単一 Relay process 内の in-memory log です。`CODEX_LINK_AUDIT_EVENT_LIMIT` で保持件数を制限し、既定は 1000 件です。Relay service は action / outcome / user / device / host / limit で filter できますが、production 向けの durable storage、retention job、検索 UI、export policy は未完成です。
 
 ## Relay が保存してよいもの
 
@@ -100,11 +102,15 @@ MVP の rate limit は単一 Relay process 内の in-memory window です。devi
 
 ## Relay のプライバシーモデル
 
-MVP では、実装速度のために broker-readable relay を採用してもよいです。
+MVP では broker-readable Relay を採用します。つまり Relay process は、iPhone から Host へ送る command payload と、Host から iPhone へ送る Codex Link event payload を中継時に読めます。
 
-その場合、Relay が中継内容を読める設計であることを明確に説明します。
+その代わり、MVP では保存範囲を明確に制限します。
 
-長期的には、iPhone app と Host app の間の暗号化ルーティングを検討できます。その場合、Relay はルーティングメタデータだけを見る形に近づけます。
+- Host command payload は Relay の永続状態、event cache、audit metadata に保存しない。認可後に active Host WebSocket へ transient に転送するだけにする。
+- Host event payload は再接続用の短い bounded event cache に保存する。これは transcript / timeline / approval / diagnostics の表示復元用 projection であり、Codex セッションの正本ではない。
+- audit metadata には user / device / host / action / outcome / 最小 detail だけを残し、device token、pairing code 本体、Host command payload、Codex prompt 本文、approval payload は残さない。
+
+これはエンドツーエンドプライバシーではありません。長期的には、iPhone app と Host app の間の暗号化ルーティングを検討できます。その場合、Relay はルーティングメタデータだけを見る形に近づけます。
 
 実装していない限り、エンドツーエンドプライバシーを主張してはいけません。
 

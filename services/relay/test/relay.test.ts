@@ -55,6 +55,27 @@ describe("RelayService", () => {
     });
   });
 
+  it("does not persist routed Host command payloads in audit metadata", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    const sensitiveText = "run deploy with token sk-test-do-not-store";
+
+    expect(relay.routeToHost(owner.id, host.id, {
+      type: "turn.start",
+      text: sensitiveText,
+    }).payload).toEqual({
+      type: "turn.start",
+      text: sensitiveText,
+    });
+
+    const serializedAudit = JSON.stringify(relay.listAuditEvents());
+    expect(serializedAudit).toContain("host.route.authorized");
+    expect(serializedAudit).not.toContain(sensitiveText);
+    expect(serializedAudit).not.toContain("turn.start");
+  });
+
   it("allows viewer HostAccess to read events but not route commands", () => {
     const relay = new RelayService();
     const owner = relay.loginPlaceholder("owner");
@@ -117,6 +138,7 @@ describe("RelayService", () => {
         }),
       ]),
     );
+    expect(JSON.stringify(relay.listAuditEvents())).not.toContain(credential.token);
   });
 
   it("enforces in-memory rate limits per scope and key", () => {
@@ -180,6 +202,40 @@ describe("RelayService", () => {
         now: new Date("2026-05-10T00:01:01Z"),
       }).remaining,
     ).toBe(1);
+  });
+
+  it("bounds and filters in-memory audit metadata", () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      auditEventLimit: 3,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+
+    relay.issueDeviceCredential({ userId: owner.id, deviceId: iphone.id });
+    relay.routeToHost(owner.id, host.id, { type: "turn.start" });
+
+    expect(relay.listAuditEvents()).toHaveLength(3);
+    expect(relay.listAuditEvents().map((event) => event.action)).toEqual([
+      "host.access.granted",
+      "device.credential.issued",
+      "host.route.authorized",
+    ]);
+    expect(relay.listAuditEvents({ action: "host.route.authorized" })).toEqual([
+      expect.objectContaining({
+        action: "host.route.authorized",
+        userId: owner.id,
+        hostId: host.id,
+      }),
+    ]);
+    expect(relay.listAuditEvents({ userId: owner.id, limit: 1 })).toEqual([
+      expect.objectContaining({ action: "host.route.authorized" }),
+    ]);
+    expect(relay.listAuditEvents({ limit: 0 })).toEqual([]);
   });
 
   it("allows Host owners to share and revoke non-owner HostAccess", () => {

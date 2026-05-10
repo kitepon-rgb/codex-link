@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 public struct CodexLinkDeviceSession: Codable, Equatable, Sendable {
     public let relayUrl: String
@@ -141,6 +142,9 @@ public protocol CodexLinkDeviceSessionStoring: Sendable {
 
 public enum CodexLinkDeviceSessionStoreError: Error, Equatable, Sendable {
     case unreadableData
+    case keychainReadFailed(OSStatus)
+    case keychainWriteFailed(OSStatus)
+    case keychainDeleteFailed(OSStatus)
 }
 
 public final class CodexLinkUserDefaultsDeviceSessionStore: CodexLinkDeviceSessionStoring, @unchecked Sendable {
@@ -179,6 +183,89 @@ public final class CodexLinkUserDefaultsDeviceSessionStore: CodexLinkDeviceSessi
 
     public func clearDeviceSession() throws {
         defaults.removeObject(forKey: key)
+    }
+}
+
+public final class CodexLinkKeychainDeviceSessionStore: CodexLinkDeviceSessionStoring, @unchecked Sendable {
+    private let service: String
+    private let account: String
+    private let accessGroup: String?
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+
+    public init(
+        service: String = "com.codex-link.ios.device-session",
+        account: String = "default",
+        accessGroup: String? = nil,
+        encoder: JSONEncoder = JSONEncoder(),
+        decoder: JSONDecoder = JSONDecoder()
+    ) {
+        self.service = service
+        self.account = account
+        self.accessGroup = accessGroup
+        self.encoder = encoder
+        self.decoder = decoder
+    }
+
+    public func loadDeviceSession() throws -> CodexLinkDeviceSession? {
+        var query = baseQuery()
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess else {
+            throw CodexLinkDeviceSessionStoreError.keychainReadFailed(status)
+        }
+        guard let data = item as? Data else {
+            throw CodexLinkDeviceSessionStoreError.unreadableData
+        }
+        do {
+            return try decoder.decode(CodexLinkDeviceSession.self, from: data)
+        } catch {
+            throw CodexLinkDeviceSessionStoreError.unreadableData
+        }
+    }
+
+    public func saveDeviceSession(_ deviceSession: CodexLinkDeviceSession) throws {
+        let data = try encoder.encode(deviceSession)
+        let deleteStatus = SecItemDelete(baseQuery() as CFDictionary)
+        if deleteStatus != errSecSuccess && deleteStatus != errSecItemNotFound {
+            throw CodexLinkDeviceSessionStoreError.keychainDeleteFailed(deleteStatus)
+        }
+
+        var item = baseQuery()
+        item[kSecValueData as String] = data
+#if os(iOS)
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+#endif
+
+        let status = SecItemAdd(item as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw CodexLinkDeviceSessionStoreError.keychainWriteFailed(status)
+        }
+    }
+
+    public func clearDeviceSession() throws {
+        let status = SecItemDelete(baseQuery() as CFDictionary)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            throw CodexLinkDeviceSessionStoreError.keychainDeleteFailed(status)
+        }
+    }
+
+    private func baseQuery() -> [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        if let accessGroup {
+            query[kSecAttrAccessGroup as String] = accessGroup
+        }
+        return query
     }
 }
 

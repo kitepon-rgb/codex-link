@@ -126,6 +126,31 @@ final class ProjectionTests: XCTestCase {
         XCTAssertNil(try store.loadDeviceSession())
     }
 
+    func testKeychainDeviceSessionStorePersistsSession() throws {
+        let store = CodexLinkKeychainDeviceSessionStore(
+            service: "CodexLinkDeviceSessionStoreTests-\(UUID().uuidString)",
+            account: "device-session"
+        )
+        defer {
+            try? store.clearDeviceSession()
+        }
+        let session = CodexLinkDeviceSession(
+            relayUrl: "http://relay.test",
+            userId: "usr_1",
+            deviceId: "dev_1",
+            deviceToken: "device_token_1",
+            displayName: "owner",
+            deviceName: "Owner iPhone"
+        )
+
+        XCTAssertNil(try store.loadDeviceSession())
+        try store.saveDeviceSession(session)
+
+        XCTAssertEqual(try store.loadDeviceSession(), session)
+        try store.clearDeviceSession()
+        XCTAssertNil(try store.loadDeviceSession())
+    }
+
     func testDecodesRelayHostEventsAndProjectsVisibleState() throws {
         let json = """
         {

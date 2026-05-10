@@ -14,6 +14,7 @@ export type {
   HostAccessRevocation,
   HostEventReplay,
   HostPairingGrant,
+  RelayAuditEventFilter,
   PlaceholderDeviceSession,
   RelayRateLimitResult,
   RoutedHostMessage,

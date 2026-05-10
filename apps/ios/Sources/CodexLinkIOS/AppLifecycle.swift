@@ -58,7 +58,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
         projection: CodexLinkProjection = CodexLinkProjection(),
         selection: CodexLinkSessionSelection = CodexLinkSessionSelection(),
         connectionState: CodexLinkConnectionState = .disconnected,
-        deviceSessionStore: any CodexLinkDeviceSessionStoring = CodexLinkUserDefaultsDeviceSessionStore(),
+        deviceSessionStore: any CodexLinkDeviceSessionStoring = CodexLinkKeychainDeviceSessionStore(),
         bookmarkStore: any CodexLinkBookmarkStoring = CodexLinkUserDefaultsBookmarkStore(),
         deviceSessionClient: (any CodexLinkDeviceSessionManaging)? = nil,
         relayClientFactory: CodexLinkAppRelayClientFactory? = nil
@@ -79,7 +79,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
         configurationErrorMessage: String,
         projection: CodexLinkProjection = CodexLinkProjection(),
         selection: CodexLinkSessionSelection = CodexLinkSessionSelection(),
-        deviceSessionStore: any CodexLinkDeviceSessionStoring = CodexLinkUserDefaultsDeviceSessionStore(),
+        deviceSessionStore: any CodexLinkDeviceSessionStoring = CodexLinkKeychainDeviceSessionStore(),
         bookmarkStore: any CodexLinkBookmarkStoring = CodexLinkUserDefaultsBookmarkStore()
     ) {
         self.configuration = nil
@@ -385,6 +385,12 @@ public final class CodexLinkAppViewModel: ObservableObject {
             return "Relay URL is not a valid HTTP, HTTPS, WS, or WSS URL."
         case CodexLinkDeviceSessionStoreError.unreadableData:
             return "Stored Codex Link device session is unreadable."
+        case CodexLinkDeviceSessionStoreError.keychainReadFailed(let status):
+            return "Stored Codex Link device session could not be read from Keychain (status \(status))."
+        case CodexLinkDeviceSessionStoreError.keychainWriteFailed(let status):
+            return "Codex Link device session could not be written to Keychain (status \(status))."
+        case CodexLinkDeviceSessionStoreError.keychainDeleteFailed(let status):
+            return "Codex Link device session could not be deleted from Keychain (status \(status))."
         case CodexLinkBookmarkStoreError.unreadableData:
             return "Stored Codex Link session bookmark is unreadable."
         case CodexLinkRelayClientError.relayError(let code, let message):
