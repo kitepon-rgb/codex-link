@@ -307,7 +307,8 @@ private struct SessionScreen: View {
             InspectorView(
                 projection: projection,
                 connectionState: connectionState,
-                selection: selection
+                selection: selection,
+                onAction: onAction
             )
         }
     }
@@ -848,8 +849,10 @@ private struct InspectorView: View {
     let projection: CodexLinkProjection
     let connectionState: CodexLinkConnectionState
     let selection: CodexLinkSessionSelection
+    let onAction: (CodexLinkUIAction) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var showRevokeConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -891,6 +894,21 @@ private struct InspectorView: View {
                         }
                     }
                 }
+
+                Section("Actions") {
+                    Button {
+                        onAction(.showHostSwitcher)
+                        dismiss()
+                    } label: {
+                        Label("Switch Host", systemImage: "desktopcomputer")
+                    }
+
+                    Button(role: .destructive) {
+                        showRevokeConfirmation = true
+                    } label: {
+                        Label("Revoke Device", systemImage: "trash")
+                    }
+                }
             }
             .navigationTitle("Inspector")
             #if os(iOS)
@@ -902,6 +920,17 @@ private struct InspectorView: View {
                         dismiss()
                     }
                 }
+            }
+            .confirmationDialog(
+                "Revoke Device",
+                isPresented: $showRevokeConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Revoke Device", role: .destructive) {
+                    onAction(.revokeDeviceSession)
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) {}
             }
         }
     }
