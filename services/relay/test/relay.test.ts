@@ -55,6 +55,30 @@ describe("RelayService", () => {
     });
   });
 
+  it("allows viewer HostAccess to read events but not route commands", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const viewer = relay.loginPlaceholder("viewer");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    const event = relay.appendHostEvent(host.id, { type: "host.online", host });
+    relay.grantHostAccess(host.id, viewer.id, "viewer");
+
+    expect(relay.readHostEvents(viewer.id, host.id)).toEqual([event]);
+    expect(() => relay.routeToHost(viewer.id, host.id, { type: "turn.start" })).toThrow(
+      "Host operator access is required",
+    );
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "host.route.denied",
+        outcome: "denied",
+        userId: viewer.id,
+        hostId: host.id,
+        detail: { role: "viewer" },
+      }),
+    );
+  });
+
   it("issues hashed device credentials and authenticates active devices", () => {
     const state = createRelayState();
     const relay = new RelayService(state);

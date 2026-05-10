@@ -152,7 +152,7 @@ grant:
 }
 ```
 
-`role` は `operator` または `viewer` だけです。`owner` は sharing API から付与しません。
+`role` は `operator` または `viewer` だけです。`owner` は sharing API から付与しません。`operator` は Host へ command を route できます。`viewer` は Host event cache の購読だけができ、`client.toHost` は拒否されます。
 
 revoke:
 

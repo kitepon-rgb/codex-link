@@ -462,7 +462,7 @@ export class RelayService {
   }
 
   routeToHost(userId: UserId, hostId: HostId, payload: unknown): RoutedHostMessage {
-    const access = this.assertHostAccess(userId, hostId);
+    const access = this.assertHostOperatorAccess(userId, hostId);
     this.recordAudit({
       action: "host.route.authorized",
       outcome: "success",
@@ -578,6 +578,21 @@ export class RelayService {
         hostId,
       });
       throw new RelayAuthzError();
+    }
+    return access;
+  }
+
+  private assertHostOperatorAccess(userId: UserId, hostId: HostId): HostAccess {
+    const access = this.assertHostAccess(userId, hostId);
+    if (access.role !== "owner" && access.role !== "operator") {
+      this.recordAudit({
+        action: "host.route.denied",
+        outcome: "denied",
+        userId,
+        hostId,
+        detail: { role: access.role },
+      });
+      throw new RelayAuthzError("Host operator access is required");
     }
     return access;
   }

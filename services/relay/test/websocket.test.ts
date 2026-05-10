@@ -603,6 +603,55 @@ describe("Relay WebSocket gateway", () => {
     });
   });
 
+  it("allows viewer HostAccess to subscribe but not send Host commands", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const viewer = relay.loginPlaceholder("viewer");
+    const viewerIphone = relay.registerDevice(viewer.id, "Viewer iPhone", "iphone");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const viewerToken = relay.issueDeviceCredential({
+      userId: viewer.id,
+      deviceId: viewerIphone.id,
+    }).token;
+    relay.grantHostAccess(host.id, viewer.id, "viewer");
+    relay.appendHostEvent(host.id, { type: "host.online", host });
+    const baseUrl = await startRelay(relay, servers);
+
+    const clientSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=client&deviceId=${viewerIphone.id}&userId=${viewer.id}`,
+      viewerToken,
+    );
+    await clientSocket.read();
+    clientSocket.send({ type: "client.subscribeHost", hostId: host.id });
+    expect(await clientSocket.read()).toMatchObject({
+      type: "host.event",
+      event: {
+        hostId: host.id,
+        event: { type: "host.online" },
+      },
+    });
+    expect(await clientSocket.read()).toMatchObject({
+      type: "host.subscription.ready",
+      hostId: host.id,
+    });
+
+    clientSocket.send({
+      type: "client.toHost",
+      hostId: host.id,
+      payload: { type: "turn.start", text: "viewer denied" },
+    });
+    expect(await clientSocket.read()).toEqual({
+      type: "relay.error",
+      code: "HOST_ACCESS_DENIED",
+      message: "Host operator access is required",
+    });
+  });
+
   it("rejects WebSocket connections without a device credential", async () => {
     const relay = new RelayService();
     const owner = relay.loginPlaceholder("owner");

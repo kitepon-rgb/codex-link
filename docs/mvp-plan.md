@@ -254,6 +254,7 @@ docs/
 - [ ] Host sharing / ACL。
   - [x] MVP placeholder として、Host owner role だけが `operator` / `viewer` HostAccess を grant / revoke できる owner-checked API を作る。
   - [x] owner device credential と結びついた sharing API にする。
+  - [x] `viewer` は Host event 購読のみ許可し、Host command routing は `owner` / `operator` に限定する。
   - [ ] production authentication と結びついた sharing UI / API。
 - [ ] audit metadata。
   - [x] Relay 内で Host routing、HostAccess grant / denial、pairing、device registration / revocation の最小 audit metadata を記録する。
