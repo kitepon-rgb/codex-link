@@ -254,6 +254,8 @@ docs/
   - [x] Relay 内で Host routing、HostAccess grant / denial、pairing、device registration / revocation の最小 audit metadata を記録する。
   - [ ] production storage / retention / search policy。
 - [ ] rate limits。
+  - [x] MVP placeholder として、単一 Relay process 内の in-memory window rate limit を sensitive HTTP / WebSocket route に適用する。
+  - [ ] production storage / distributed quota / user plan 別 limit。
 - [ ] relay payloads の privacy model 決定。
 
 ## MVP の非目標

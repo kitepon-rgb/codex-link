@@ -14,6 +14,7 @@ export type {
   HostEventReplay,
   HostPairingGrant,
   PlaceholderDeviceSession,
+  RelayRateLimitResult,
   RoutedHostMessage,
   ShareableHostAccessRole,
 } from "./relay.js";
@@ -23,6 +24,7 @@ export type {
   HostPairingCode,
   RelayAuditEvent,
   RelayAuditOutcome,
+  RelayRateLimitBucket,
   RelayState,
 } from "./state.js";
 export { createRelayHttpServer, RelayWebSocketGateway } from "./websocket.js";

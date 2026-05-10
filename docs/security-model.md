@@ -76,6 +76,8 @@ MVP の device revocation も placeholder 実装です。Relay は revoke 済み
 
 MVP の Host sharing / ACL は、既存 HostAccess の owner role を持つ user だけが `operator` または `viewer` を grant / revoke できる段階です。request body の user id と既存 ACL を照合しますが、production authentication や短命 session credential はまだ未完成です。owner access は sharing API から revoke しません。
 
+MVP の rate limit は単一 Relay process 内の in-memory window です。device session creation / pairing / revoke、HostAccess grant / revoke、Host bootstrap、Host pairing code creation、client subscribe / route を対象にします。複数 process で共有される quota、永続化、user plan 別の制御は hardening phase の対象です。
+
 ## Relay が保存してよいもの
 
 - ユーザーとデバイスのメタデータ

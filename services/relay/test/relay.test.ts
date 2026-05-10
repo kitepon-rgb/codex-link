@@ -55,6 +55,69 @@ describe("RelayService", () => {
     });
   });
 
+  it("enforces in-memory rate limits per scope and key", () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      rateLimitWindowMs: 60_000,
+      rateLimitMaxRequestsPerWindow: 2,
+    });
+
+    expect(
+      relay.checkRateLimit({
+        scope: "test.scope",
+        key: "subject",
+        now: new Date("2026-05-10T00:00:00Z"),
+      }),
+    ).toEqual({
+      remaining: 1,
+      resetAt: "2026-05-10T00:01:00.000Z",
+    });
+    expect(
+      relay.checkRateLimit({
+        scope: "test.scope",
+        key: "subject",
+        now: new Date("2026-05-10T00:00:10Z"),
+      }),
+    ).toEqual({
+      remaining: 0,
+      resetAt: "2026-05-10T00:01:00.000Z",
+    });
+    expect(() =>
+      relay.checkRateLimit({
+        scope: "test.scope",
+        key: "subject",
+        now: new Date("2026-05-10T00:00:20Z"),
+      }),
+    ).toThrow("Rate limit exceeded");
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "rate_limit.denied",
+        outcome: "denied",
+        detail: {
+          scope: "test.scope",
+          key: "subject",
+          resetAt: "2026-05-10T00:01:00.000Z",
+        },
+      }),
+    );
+    expect(
+      relay.checkRateLimit({
+        scope: "test.scope",
+        key: "other-subject",
+        now: new Date("2026-05-10T00:00:20Z"),
+      }).remaining,
+    ).toBe(1);
+    expect(
+      relay.checkRateLimit({
+        scope: "test.scope",
+        key: "subject",
+        now: new Date("2026-05-10T00:01:01Z"),
+      }).remaining,
+    ).toBe(1);
+  });
+
   it("allows Host owners to share and revoke non-owner HostAccess", () => {
     const relay = new RelayService();
     const owner = relay.loginPlaceholder("owner");

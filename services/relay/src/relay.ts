@@ -81,6 +81,11 @@ export interface HostEventReplay {
   latestSequence: number;
 }
 
+export interface RelayRateLimitResult {
+  remaining: number;
+  resetAt: string;
+}
+
 export class RelayService {
   constructor(
     private readonly state: RelayState = createRelayState(),
@@ -423,6 +428,43 @@ export class RelayService {
       detail: { role: access.role },
     });
     return { userId, hostId, payload };
+  }
+
+  checkRateLimit(input: {
+    scope: string;
+    key: string;
+    now?: Date;
+  }): RelayRateLimitResult {
+    const limit = Math.max(1, this.config.rateLimitMaxRequestsPerWindow ?? 120);
+    const windowMs = Math.max(1, this.config.rateLimitWindowMs ?? 60_000);
+    const now = input.now ?? new Date();
+    const nowMs = now.getTime();
+    const bucketKey = `${input.scope}:${input.key}`;
+    let bucket = this.state.rateLimitBuckets.get(bucketKey);
+    if (!bucket || bucket.resetAt <= nowMs) {
+      bucket = {
+        count: 0,
+        resetAt: nowMs + windowMs,
+      };
+      this.state.rateLimitBuckets.set(bucketKey, bucket);
+    }
+    if (bucket.count >= limit) {
+      this.recordAudit({
+        action: "rate_limit.denied",
+        outcome: "denied",
+        detail: {
+          scope: input.scope,
+          key: input.key,
+          resetAt: new Date(bucket.resetAt).toISOString(),
+        },
+      });
+      throw new RelayError("Rate limit exceeded", "RATE_LIMITED");
+    }
+    bucket.count += 1;
+    return {
+      remaining: limit - bucket.count,
+      resetAt: new Date(bucket.resetAt).toISOString(),
+    };
   }
 
   appendHostEvent(hostId: HostId, event: CodexLinkEvent): CachedRelayEvent {

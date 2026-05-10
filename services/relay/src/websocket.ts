@@ -225,6 +225,10 @@ export class RelayWebSocketGateway {
     this.relay.assertActiveDevice(session.deviceId);
     const message = parseClientMessage(raw);
     if (message.type === "client.subscribeHost") {
+      this.relay.checkRateLimit({
+        scope: "ws.client.subscribe_host",
+        key: `${session.userId}:${message.hostId}`,
+      });
       this.relay.assertHostAccess(session.userId, message.hostId);
       const afterSequence = message.afterSequence ?? 0;
       const replay = this.relay.readHostEventReplay(
@@ -245,6 +249,10 @@ export class RelayWebSocketGateway {
       return;
     }
     if (message.type === "client.toHost") {
+      this.relay.checkRateLimit({
+        scope: "ws.client.to_host",
+        key: `${session.userId}:${message.hostId}`,
+      });
       const routed = this.relay.routeToHost(session.userId, message.hostId, message.payload);
       const hosts = this.hostSessionsFor(message.hostId);
       for (const hostSession of hosts) {
@@ -262,6 +270,10 @@ export class RelayWebSocketGateway {
       return;
     }
     if (message.type === "host.pairingCode.create") {
+      this.relay.checkRateLimit({
+        scope: "ws.host.pairing_code.create",
+        key: session.hostId,
+      });
       const pairingCode = this.relay.createHostPairingCode(session.hostId);
       this.send(session.socket, {
         type: "host.pairingCode.created",
@@ -373,6 +385,10 @@ async function handleHttpRequest(
   response: ServerResponse,
 ): Promise<void> {
   if (request.method === "POST" && request.url === "/api/device-session") {
+    relay.checkRateLimit({
+      scope: "http.device_session.create",
+      key: requestRateLimitKey(request),
+    });
     const body = (await readJson(request)) as DeviceSessionRequest;
     const displayName = requiredString(body.displayName, "displayName");
     const deviceName = requiredString(body.deviceName, "deviceName");
@@ -392,6 +408,10 @@ async function handleHttpRequest(
     const userId = requiredString(body.userId, "userId") as UserId;
     const deviceId = requiredString(body.deviceId, "deviceId") as DeviceId;
     const pairingCode = requiredString(body.pairingCode, "pairingCode");
+    relay.checkRateLimit({
+      scope: "http.device_session.pair",
+      key: deviceId,
+    });
     const grant = relay.redeemHostPairingCode({ userId, deviceId, pairingCode });
     writeJson(response, 201, {
       relayUrl: relay.getPublicBaseUrl(),
@@ -408,6 +428,10 @@ async function handleHttpRequest(
     const body = (await readJson(request)) as DeviceSessionRevokeRequest;
     const userId = requiredString(body.userId, "userId") as UserId;
     const deviceId = requiredString(body.deviceId, "deviceId") as DeviceId;
+    relay.checkRateLimit({
+      scope: "http.device_session.revoke",
+      key: deviceId,
+    });
     const revocation = relay.revokeDevice({ userId, deviceId });
     gateway?.disconnectDeviceSessions(deviceId);
     writeJson(response, 200, {
@@ -425,6 +449,10 @@ async function handleHttpRequest(
     const hostId = requiredString(body.hostId, "hostId") as HostId;
     const targetUserId = requiredString(body.targetUserId, "targetUserId") as UserId;
     const role = requiredShareableHostRole(body.role);
+    relay.checkRateLimit({
+      scope: "http.host_access.grant",
+      key: `${ownerUserId}:${hostId}`,
+    });
     const grant = relay.grantHostAccessByOwner({
       ownerUserId,
       hostId,
@@ -445,6 +473,10 @@ async function handleHttpRequest(
     const ownerUserId = requiredString(body.ownerUserId, "ownerUserId") as UserId;
     const hostId = requiredString(body.hostId, "hostId") as HostId;
     const targetUserId = requiredString(body.targetUserId, "targetUserId") as UserId;
+    relay.checkRateLimit({
+      scope: "http.host_access.revoke",
+      key: `${ownerUserId}:${hostId}`,
+    });
     const revocation = relay.revokeHostAccessByOwner({
       ownerUserId,
       hostId,
@@ -460,6 +492,10 @@ async function handleHttpRequest(
   }
 
   if (request.method === "POST" && request.url === "/api/host-bootstrap") {
+    relay.checkRateLimit({
+      scope: "http.host_bootstrap",
+      key: requestRateLimitKey(request),
+    });
     const body = (await readJson(request)) as HostBootstrapRequest;
     const ownerDisplayName = requiredString(body.ownerDisplayName, "ownerDisplayName");
     const hostName = requiredString(body.hostName, "hostName");
@@ -521,6 +557,9 @@ function statusForError(error: unknown): number {
   if (normalized.code === "NOT_FOUND") {
     return 404;
   }
+  if (normalized.code === "RATE_LIMITED") {
+    return 429;
+  }
   if (
     normalized.code === "BAD_JSON" ||
     normalized.code === "BAD_HOST_ACCESS_ROLE" ||
@@ -536,6 +575,10 @@ function bearerToken(authorization: string | undefined): string | null {
     return null;
   }
   return authorization.slice("Bearer ".length);
+}
+
+function requestRateLimitKey(request: IncomingMessage): string {
+  return request.socket.remoteAddress ?? "unknown";
 }
 
 function requiredString(value: unknown, name: string): string {

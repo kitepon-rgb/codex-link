@@ -39,6 +39,11 @@ export interface RelayAuditEvent {
   detail?: Record<string, string | number | boolean | null>;
 }
 
+export interface RelayRateLimitBucket {
+  count: number;
+  resetAt: number;
+}
+
 export interface RelayState {
   users: Map<UserId, User>;
   devices: Map<DeviceId, Device>;
@@ -49,6 +54,7 @@ export interface RelayState {
   eventCacheDroppedThrough: Map<HostId, number>;
   hostPairingCodes: Map<string, HostPairingCode>;
   auditEvents: RelayAuditEvent[];
+  rateLimitBuckets: Map<string, RelayRateLimitBucket>;
   nextEventSequence: number;
   nextAuditSequence: number;
 }
@@ -64,6 +70,7 @@ export function createRelayState(): RelayState {
     eventCacheDroppedThrough: new Map(),
     hostPairingCodes: new Map(),
     auditEvents: [],
+    rateLimitBuckets: new Map(),
     nextEventSequence: 1,
     nextAuditSequence: 1,
   };

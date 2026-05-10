@@ -2,6 +2,8 @@ export interface RelayConfig {
   publicBaseUrl: string;
   eventCacheLimitPerHost: number;
   hostBootstrapToken: string | null;
+  rateLimitWindowMs?: number;
+  rateLimitMaxRequestsPerWindow?: number;
 }
 
 export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
@@ -12,5 +14,13 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
       10,
     ),
     hostBootstrapToken: env.CODEX_LINK_HOST_BOOTSTRAP_TOKEN ?? null,
+    rateLimitWindowMs: Number.parseInt(
+      env.CODEX_LINK_RATE_LIMIT_WINDOW_MS ?? "60000",
+      10,
+    ),
+    rateLimitMaxRequestsPerWindow: Number.parseInt(
+      env.CODEX_LINK_RATE_LIMIT_MAX_REQUESTS ?? "120",
+      10,
+    ),
   };
 }

@@ -281,6 +281,73 @@ describe("Relay WebSocket gateway", () => {
     });
   });
 
+  it("rate limits placeholder iPhone device session creation", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      rateLimitWindowMs: 60_000,
+      rateLimitMaxRequestsPerWindow: 1,
+    });
+    const baseUrl = await startRelay(relay, servers);
+    const httpBaseUrl = baseUrl.replace("ws://", "http://");
+
+    const first = await fetch(`${httpBaseUrl}/api/device-session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        displayName: "owner",
+        deviceName: "Owner iPhone",
+      }),
+    });
+    expect(first.status).toBe(201);
+
+    const second = await fetch(`${httpBaseUrl}/api/device-session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        displayName: "owner",
+        deviceName: "Second iPhone",
+      }),
+    });
+    expect(second.status).toBe(429);
+    await expect(second.json()).resolves.toMatchObject({
+      code: "RATE_LIMITED",
+      message: "Rate limit exceeded",
+    });
+  });
+
+  it("rate limits Host pairing code creation over WebSocket", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      rateLimitWindowMs: 60_000,
+      rateLimitMaxRequestsPerWindow: 1,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const baseUrl = await startRelay(relay, servers);
+
+    const hostSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=host&deviceId=${mac.id}&hostId=${host.id}`,
+    );
+    await hostSocket.read();
+    hostSocket.send({ type: "host.pairingCode.create" });
+    expect(await hostSocket.read()).toMatchObject({
+      type: "host.pairingCode.created",
+      hostId: host.id,
+    });
+
+    hostSocket.send({ type: "host.pairingCode.create" });
+    expect(await hostSocket.read()).toEqual({
+      type: "relay.error",
+      code: "RATE_LIMITED",
+      message: "Rate limit exceeded",
+    });
+  });
+
   it("revokes placeholder iPhone sessions and disconnects active Relay sockets", async () => {
     const relay = new RelayService(undefined, {
       publicBaseUrl: "http://relay.test",
