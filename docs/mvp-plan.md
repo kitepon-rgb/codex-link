@@ -266,6 +266,7 @@ docs/
 - [ ] rate limits。
   - [x] MVP placeholder として、単一 Relay process 内の in-memory window rate limit を sensitive HTTP / WebSocket route に適用する。
   - [x] HTTP JSON body size limit を設定可能にし、超過を `PAYLOAD_TOO_LARGE` として拒否する。
+  - [x] WebSocket message payload size limit を設定可能にする。
   - [ ] production storage / distributed quota / user plan 別 limit。
 - [x] relay payloads の privacy model 決定。
   - MVP は broker-readable Relay とする。Host command payload は transient routing のみで保存せず、Host event payload は bounded event cache に保存する。

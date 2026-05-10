@@ -100,8 +100,12 @@ export class RelayWebSocketGateway {
     this.server = new WebSocketServer({
       server: httpServer,
       path: options.path ?? "/relay",
+      maxPayload: relay.getMaxWebSocketPayloadBytes(),
     });
     this.server.on("connection", (socket, request) => {
+      socket.on("error", () => {
+        this.sessions.delete(socket);
+      });
       this.handleConnection(socket, request).catch((error: unknown) => {
         this.sendError(socket, error);
         socket.close();

@@ -394,6 +394,34 @@ describe("Relay WebSocket gateway", () => {
     });
   });
 
+  it("closes WebSocket connections that exceed the configured payload size", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      maxWebSocketPayloadBytes: 32,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const iphoneToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: iphone.id }).token;
+    const baseUrl = await startRelay(relay, servers);
+
+    const clientSocket = await openRelaySocket(
+      `${baseUrl}/relay?kind=client&deviceId=${iphone.id}&userId=${owner.id}`,
+      iphoneToken,
+    );
+    await clientSocket.read();
+
+    const closed = clientSocket.closed();
+    clientSocket.socket.send(JSON.stringify({
+      type: "client.toHost",
+      hostId: "host_1",
+      payload: { text: "payload larger than thirty-two bytes" },
+    }));
+
+    await expect(closed).resolves.toMatchObject({ code: 1009 });
+  });
+
   it("revokes placeholder iPhone sessions and disconnects active Relay sockets", async () => {
     const relay = new RelayService(undefined, {
       publicBaseUrl: "http://relay.test",
@@ -765,6 +793,7 @@ interface TestRelaySocket {
   socket: WebSocket;
   send(message: unknown): void;
   read(): Promise<RelayServerMessage>;
+  closed(): Promise<{ code: number; reason: string }>;
 }
 
 function openRelaySocket(url: string, deviceToken?: string): Promise<TestRelaySocket> {
@@ -801,6 +830,13 @@ function openRelaySocket(url: string, deviceToken?: string): Promise<TestRelaySo
           }
           return new Promise((reader) => {
             readers.push(reader);
+          });
+        },
+        closed(): Promise<{ code: number; reason: string }> {
+          return new Promise((closed) => {
+            socket.once("close", (code, reason) => {
+              closed({ code, reason: reason.toString("utf8") });
+            });
           });
         },
       }),

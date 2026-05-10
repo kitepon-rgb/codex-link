@@ -31,6 +31,7 @@ import { createRelayState } from "./state.js";
 const DEFAULT_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_AUDIT_EVENT_LIMIT = 1000;
 const DEFAULT_MAX_HTTP_BODY_BYTES = 64 * 1024;
+const DEFAULT_MAX_WEBSOCKET_PAYLOAD_BYTES = 1024 * 1024;
 
 export type ShareableHostAccessRole = Exclude<HostAccess["role"], "owner">;
 
@@ -715,6 +716,14 @@ export class RelayService {
     return Number.isFinite(configuredLimit)
       ? Math.max(1, configuredLimit)
       : DEFAULT_MAX_HTTP_BODY_BYTES;
+  }
+
+  getMaxWebSocketPayloadBytes(): number {
+    const configuredLimit =
+      this.config.maxWebSocketPayloadBytes ?? DEFAULT_MAX_WEBSOCKET_PAYLOAD_BYTES;
+    return Number.isFinite(configuredLimit)
+      ? Math.max(1, configuredLimit)
+      : DEFAULT_MAX_WEBSOCKET_PAYLOAD_BYTES;
   }
 
   private requireUser(userId: UserId): User {
