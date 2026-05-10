@@ -36,7 +36,7 @@ struct CodexLinkPreviewCanvas: View {
                 selection.threadId = resolvedThreadId
             }
             selection.activeTurnId = turnId
-            projection.apply(.turnStatusChanged(turnId: turnId, status: .running))
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: turnId, status: .running))
             projection.apply(.transcriptItemRecorded(
                 threadId: resolvedThreadId,
                 turnId: turnId,
@@ -58,10 +58,10 @@ struct CodexLinkPreviewCanvas: View {
                 text: prompt
             ))
         case .interrupt(_, let turnId):
-            projection.apply(.turnStatusChanged(turnId: turnId, status: .canceled))
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: turnId, status: .canceled))
         case .approvalDecision(let requestId, let decision):
             projection.apply(.approvalResolved(requestId: requestId, decision: decision))
-            projection.apply(.turnStatusChanged(turnId: "turn_2", status: .running))
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_2", status: .running))
         case .selectHost(let hostId):
             selection.hostId = hostId
         case .selectProject(let projectId):
@@ -106,7 +106,7 @@ enum CodexLinkPreviewData {
             break
         case .running:
             connectionState = .connected
-            projection.apply(.turnStatusChanged(turnId: "turn_2", status: .running))
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_2", status: .running))
             projection.apply(.timelineItemStarted(
                 threadId: "thread_1",
                 turnId: "turn_2",
@@ -120,7 +120,7 @@ enum CodexLinkPreviewData {
             ))
         case .approval:
             connectionState = .connected
-            projection.apply(.turnStatusChanged(turnId: "turn_2", status: .waitingForApproval))
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_2", status: .waitingForApproval))
             projection.apply(.timelineItemStarted(
                 threadId: "thread_1",
                 turnId: "turn_2",
@@ -139,7 +139,7 @@ enum CodexLinkPreviewData {
             )))
         case .reconnecting:
             connectionState = .reconnecting
-            projection.apply(.turnStatusChanged(turnId: "turn_2", status: .running))
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_2", status: .running))
             projection.apply(.timelineItemStarted(
                 threadId: "thread_1",
                 turnId: "turn_2",
@@ -153,7 +153,7 @@ enum CodexLinkPreviewData {
             ))
         case .offline:
             connectionState = .failed
-            projection.apply(.turnStatusChanged(turnId: "turn_2", status: .failed))
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_2", status: .failed))
             projection.apply(.timelineItemStarted(
                 threadId: "thread_1",
                 turnId: "turn_2",
@@ -213,7 +213,7 @@ enum CodexLinkPreviewData {
             projectId: "project_1",
             title: "Relay reconnect test"
         )))
-        projection.apply(.turnStatusChanged(turnId: "turn_1", status: .completed))
+        projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_1", status: .completed))
         projection.apply(.transcriptItemRecorded(
             threadId: "thread_1",
             turnId: "turn_1",

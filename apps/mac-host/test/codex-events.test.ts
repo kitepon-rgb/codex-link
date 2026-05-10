@@ -36,7 +36,14 @@ describe("Codex app-server event normalization", () => {
         },
         projectId,
       ),
-    ).toEqual([{ type: "turn.status.changed", turnId: "turn_1", status: "running" }]);
+    ).toEqual([
+      {
+        type: "turn.status.changed",
+        threadId: "thread_1",
+        turnId: "turn_1",
+        status: "running",
+      },
+    ]);
 
     expect(
       codexNotificationToEvents(
@@ -186,8 +193,14 @@ describe("Codex app-server event normalization", () => {
       type: "thread.started",
       thread: { id: "thread_1", projectId, title: "Thread title" },
     });
-    expect(turnStartResponseToEvent({ turn: { id: "turn_1", status: "inProgress" } })).toEqual({
+    expect(
+      turnStartResponseToEvent(
+        { turn: { id: "turn_1", status: "inProgress" } },
+        "thread_1" as never,
+      ),
+    ).toEqual({
       type: "turn.status.changed",
+      threadId: "thread_1",
       turnId: "turn_1",
       status: "running",
     });
@@ -216,7 +229,12 @@ describe("Codex app-server event normalization", () => {
 
     expect(threadReadResponseToEvents({ thread }, projectId)).toMatchObject([
       { type: "thread.started", thread: { id: "thread_1", projectId, title: "Preview" } },
-      { type: "turn.status.changed", turnId: "turn_1", status: "completed" },
+      {
+        type: "turn.status.changed",
+        threadId: "thread_1",
+        turnId: "turn_1",
+        status: "completed",
+      },
       { type: "timeline.item.started", itemId: "item_user" },
       { type: "timeline.item.completed", itemId: "item_user" },
       { type: "transcript.item.recorded", itemId: "item_user", role: "user", text: "Hello" },
@@ -232,7 +250,12 @@ describe("Codex app-server event normalization", () => {
 
     expect(
       threadTurnsListResponseToEvents({ data: thread.turns }, projectId, "thread_1" as never),
-    ).toContainEqual({ type: "turn.status.changed", turnId: "turn_1", status: "completed" });
+    ).toContainEqual({
+      type: "turn.status.changed",
+      threadId: "thread_1",
+      turnId: "turn_1",
+      status: "completed",
+    });
   });
 
   it("normalizes command, network, file-change, and user-input approval requests", () => {

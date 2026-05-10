@@ -312,6 +312,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
             projection.apply(cached.event)
             lastRelaySequence = max(lastRelaySequence ?? 0, cached.sequence)
             selectDefaultProjectIfNeeded(for: cached.hostId)
+            selectActiveTurnIfNeeded(from: cached.event, hostId: cached.hostId)
             persistSelection(previousSelection: selection)
         case .hostSubscriptionReady(_, _, let latestSequence):
             lastRelaySequence = max(lastRelaySequence ?? 0, latestSequence)
@@ -334,6 +335,48 @@ public final class CodexLinkAppViewModel: ObservableObject {
             return
         }
         selection.projectId = project.id
+    }
+
+    private func selectActiveTurnIfNeeded(from event: CodexLinkEvent, hostId: String) {
+        guard selection.hostId == hostId else {
+            return
+        }
+
+        let hint: (threadId: String, turnId: String)
+        switch event {
+        case .turnStatusChanged(let threadId, let turnId, _):
+            guard let threadId else {
+                return
+            }
+            hint = (threadId, turnId)
+        case .assistantDelta(let threadId, let turnId, _),
+             .assistantFinal(let threadId, let turnId, _, _),
+             .transcriptItemRecorded(let threadId, let turnId, _, _, _),
+             .timelineItemStarted(let threadId, let turnId, _, _),
+             .timelineItemCompleted(let threadId, let turnId, _, _):
+            hint = (threadId, turnId)
+        case .approvalRequested(let request):
+            hint = (request.threadId, request.turnId)
+        default:
+            return
+        }
+
+        guard let thread = projection.threads[hint.threadId] else {
+            return
+        }
+        if selection.projectId == nil {
+            selection.projectId = thread.projectId
+        }
+        guard selection.projectId == thread.projectId else {
+            return
+        }
+        if selection.threadId == nil {
+            selection.threadId = hint.threadId
+        }
+        guard selection.threadId == hint.threadId else {
+            return
+        }
+        selection.activeTurnId = hint.turnId
     }
 
     private func send(_ action: CodexLinkUIAction) async {

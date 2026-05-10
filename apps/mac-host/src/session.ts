@@ -123,7 +123,7 @@ export class MacHostSessionRunner {
       input: [{ type: "text", text: command.prompt, text_elements: [] }],
       cwd: project.path,
     });
-    this.sendMaybe(turnStartResponseToEvent(turnResponse));
+    this.sendMaybe(turnStartResponseToEvent(turnResponse, threadId));
   }
 
   async steerTurn(command: SteerCodexTurnCommand): Promise<void> {

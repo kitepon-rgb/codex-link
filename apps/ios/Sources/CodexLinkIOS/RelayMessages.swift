@@ -68,7 +68,7 @@ public enum CodexLinkEvent: Equatable, Sendable {
     case hostCapabilitiesUpdated(hostId: String)
     case projectListUpdated(hostId: String, projects: [ProjectRef])
     case threadStarted(ThreadRef)
-    case turnStatusChanged(turnId: String, status: TurnStatus)
+    case turnStatusChanged(threadId: String?, turnId: String, status: TurnStatus)
     case assistantDelta(threadId: String, turnId: String, text: String)
     case assistantFinal(threadId: String, turnId: String, itemId: String, text: String)
     case transcriptItemRecorded(
@@ -134,6 +134,7 @@ extension CodexLinkEvent: Codable {
             self = .threadStarted(try container.decode(ThreadRef.self, forKey: .thread))
         case "turn.status.changed":
             self = .turnStatusChanged(
+                threadId: try container.decodeIfPresent(String.self, forKey: .threadId),
                 turnId: try container.decode(String.self, forKey: .turnId),
                 status: try container.decode(TurnStatus.self, forKey: .status)
             )
@@ -218,8 +219,9 @@ extension CodexLinkEvent: Codable {
         case .threadStarted(let thread):
             try container.encode("thread.started", forKey: .type)
             try container.encode(thread, forKey: .thread)
-        case .turnStatusChanged(let turnId, let status):
+        case .turnStatusChanged(let threadId, let turnId, let status):
             try container.encode("turn.status.changed", forKey: .type)
+            try container.encodeIfPresent(threadId, forKey: .threadId)
             try container.encode(turnId, forKey: .turnId)
             try container.encode(status, forKey: .status)
         default:

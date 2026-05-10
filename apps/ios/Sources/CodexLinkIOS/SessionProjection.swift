@@ -26,7 +26,7 @@ public struct CodexLinkProjection: Equatable, Sendable {
             projectsByHost[hostId] = projects
         case .threadStarted(let thread):
             threads[thread.id] = thread
-        case .turnStatusChanged(let turnId, let status):
+        case .turnStatusChanged(_, let turnId, let status):
             turnStatus[turnId] = status
         case .assistantDelta(let threadId, let turnId, let text):
             appendAssistantDelta(threadId: threadId, turnId: turnId, text: text)

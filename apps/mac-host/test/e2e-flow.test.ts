@@ -122,6 +122,7 @@ describe("Codex Link MVP host pairing flow", () => {
         hostId: pairing.hostId,
         event: {
           type: "turn.status.changed",
+          threadId: "thread_1",
           turnId: "turn_1",
           status: "running",
         },

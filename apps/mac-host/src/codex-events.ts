@@ -40,13 +40,15 @@ export function codexNotificationToEvents(
 
   if (message.method === "turn/started" || message.method === "turn/completed") {
     const turn = objectValue(params.turn);
+    const threadId = stringValue(params.threadId) ?? stringValue(turn?.threadId);
     const turnId = stringValue(turn?.id);
-    if (!turnId) {
+    if (!threadId || !turnId) {
       return [];
     }
     return [
       {
         type: "turn.status.changed",
+        threadId: threadId as ThreadId,
         turnId: turnId as TurnId,
         status: codexTurnStatusToLinkStatus(stringValue(turn?.status)),
       },
@@ -311,6 +313,7 @@ function turnToEvents(
   const events: CodexLinkEvent[] = [
     {
       type: "turn.status.changed",
+      threadId: threadId as ThreadId,
       turnId: turnId as TurnId,
       status: codexTurnStatusToLinkStatus(stringValue(turn.status)),
     },
@@ -354,7 +357,10 @@ export function threadStartResponseToEvent(
   };
 }
 
-export function turnStartResponseToEvent(response: unknown): CodexLinkEvent | null {
+export function turnStartResponseToEvent(
+  response: unknown,
+  threadId: ThreadId,
+): CodexLinkEvent | null {
   const turn = objectValue(objectValue(response)?.turn);
   const turnId = stringValue(turn?.id);
   if (!turn || !turnId) {
@@ -362,6 +368,7 @@ export function turnStartResponseToEvent(response: unknown): CodexLinkEvent | nu
   }
   return {
     type: "turn.status.changed",
+    threadId,
     turnId: turnId as TurnId,
     status: codexTurnStatusToLinkStatus(stringValue(turn.status)),
   };

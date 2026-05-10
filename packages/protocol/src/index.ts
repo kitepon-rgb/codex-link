@@ -113,7 +113,7 @@ export type CodexLinkEvent =
   | { type: "host.capabilities.updated"; hostId: HostId; capabilities: unknown }
   | { type: "project.list.updated"; hostId: HostId; projects: ProjectRef[] }
   | { type: "thread.started"; thread: ThreadRef }
-  | { type: "turn.status.changed"; turnId: TurnId; status: TurnStatus }
+  | { type: "turn.status.changed"; threadId: ThreadId; turnId: TurnId; status: TurnStatus }
   | { type: "assistant.delta"; threadId: ThreadId; turnId: TurnId; text: string }
   | {
       type: "assistant.final";

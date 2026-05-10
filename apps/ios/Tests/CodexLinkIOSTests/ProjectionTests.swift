@@ -245,7 +245,7 @@ final class ProjectionTests: XCTestCase {
             projectId: "project_1",
             title: "Thread"
         )))
-        projection.apply(.turnStatusChanged(turnId: "turn_1", status: .running))
+        projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_1", status: .running))
         projection.apply(.transcriptItemRecorded(
             threadId: "thread_1",
             turnId: "turn_1",
@@ -548,7 +548,7 @@ final class ProjectionTests: XCTestCase {
             projectId: "project_1",
             title: "Thread"
         )))
-        projection.apply(.turnStatusChanged(turnId: "turn_1", status: .running))
+        projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_1", status: .running))
 
         let selection = CodexLinkSessionRestore.selection(
             from: CodexLinkSessionBookmark(
@@ -634,7 +634,7 @@ final class ProjectionTests: XCTestCase {
             projectId: "project_1",
             title: "Thread"
         )))
-        projection.apply(.turnStatusChanged(turnId: "turn_1", status: .running))
+        projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_1", status: .running))
 
         let store = InMemoryBookmarkStore(bookmark: originalBookmark)
         let relay = MockVisibleSessionRestorer(result: CodexLinkWebSocketRestoreResult(
@@ -823,11 +823,36 @@ final class ProjectionTests: XCTestCase {
         try await waitUntil {
             model.selection.projectId == "project_1"
         }
+        relayClient.messages.append(.hostEvent(CachedRelayEvent(
+            sequence: 2,
+            hostId: "host_1",
+            event: .threadStarted(ThreadRef(
+                id: "thread_1",
+                projectId: "project_1",
+                title: "First prompt"
+            )),
+            receivedAt: "2026-05-10T00:00:01Z"
+        )))
+        relayClient.messages.append(.hostEvent(CachedRelayEvent(
+            sequence: 3,
+            hostId: "host_1",
+            event: .turnStatusChanged(
+                threadId: "thread_1",
+                turnId: "turn_1",
+                status: .running
+            ),
+            receivedAt: "2026-05-10T00:00:02Z"
+        )))
+        try await waitUntil {
+            model.selection.threadId == "thread_1" && model.selection.activeTurnId == "turn_1"
+        }
 
         XCTAssertEqual(deviceClient.pairingCode, "ABCD-EF12")
         XCTAssertEqual(deviceClient.pairingDeviceToken, "device_token_1")
         XCTAssertEqual(model.selection.hostId, "host_1")
         XCTAssertEqual(bookmarkStore.bookmark?.projectId, "project_1")
+        XCTAssertEqual(bookmarkStore.bookmark?.threadId, "thread_1")
+        XCTAssertEqual(bookmarkStore.bookmark?.activeTurnId, "turn_1")
 
         model.stop()
     }
@@ -923,7 +948,7 @@ private func projectionWithActiveTurn(status: TurnStatus) -> CodexLinkProjection
         projectId: "project_1",
         title: "Thread"
     )))
-    projection.apply(.turnStatusChanged(turnId: "turn_1", status: status))
+    projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_1", status: status))
     return projection
 }
 

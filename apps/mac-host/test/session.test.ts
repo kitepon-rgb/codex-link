@@ -64,7 +64,12 @@ describe("MacHostSessionRunner", () => {
         type: "thread.started",
         thread: { id: "thread_1", projectId: "project_1", title: "Prompt" },
       },
-      { type: "turn.status.changed", turnId: "turn_1", status: "running" },
+      {
+        type: "turn.status.changed",
+        threadId: "thread_1",
+        turnId: "turn_1",
+        status: "running",
+      },
     ]);
   });
 
@@ -203,6 +208,7 @@ describe("MacHostSessionRunner", () => {
     });
     expect(events).toContainEqual({
       type: "turn.status.changed",
+      threadId: "thread_1",
       turnId: "turn_1",
       status: "completed",
     });
