@@ -79,6 +79,7 @@ export interface MacHostSessionRunnerOptions {
 }
 
 export class MacHostSessionRunner {
+  private readonly pendingApprovalRequestIds = new Set<string>();
   private readonly pendingApprovalDecisions = new Map<string, ApprovalDecisionKind>();
 
   constructor(private readonly options: MacHostSessionRunnerOptions) {}
@@ -191,13 +192,17 @@ export class MacHostSessionRunner {
     if (message.method === "serverRequest/resolved") {
       const requestId = requestIdFromServerRequestResolved(message.params);
       const decision = requestId ? this.pendingApprovalDecisions.get(requestId) : undefined;
-      if (requestId && decision) {
+      const hadPendingRequest = requestId
+        ? this.pendingApprovalRequestIds.delete(requestId)
+        : false;
+      if (requestId && (hadPendingRequest || decision)) {
         this.pendingApprovalDecisions.delete(requestId);
-        this.send({
+        const resolvedEvent: CodexLinkEvent = {
           type: "approval.resolved",
           requestId: requestId as RequestId,
-          decision,
-        });
+          ...(decision ? { decision } : {}),
+        };
+        this.send(resolvedEvent);
       }
       return;
     }
@@ -217,7 +222,11 @@ export class MacHostSessionRunner {
   }
 
   handleCodexServerRequest(message: Parameters<typeof codexServerRequestToEvent>[0]): void {
-    this.sendMaybe(codexServerRequestToEvent(message));
+    const event = codexServerRequestToEvent(message);
+    if (event?.type === "approval.requested") {
+      this.pendingApprovalRequestIds.add(event.request.id);
+    }
+    this.sendMaybe(event);
   }
 
   private async startThread(project: MacHostProjectConfig): Promise<ThreadId> {

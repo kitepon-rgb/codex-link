@@ -86,7 +86,7 @@ public enum CodexLinkEvent: Equatable, Sendable {
         status: TimelineStatus
     )
     case approvalRequested(ApprovalRequest)
-    case approvalResolved(requestId: String, decision: ApprovalDecisionKind)
+    case approvalResolved(requestId: String, decision: ApprovalDecisionKind?)
     case rateLimitUpdated
     case diagnosticReported(DiagnosticEvent)
     case errorReported(scope: String, message: String)
@@ -178,7 +178,7 @@ extension CodexLinkEvent: Codable {
         case "approval.resolved":
             self = .approvalResolved(
                 requestId: try container.decode(String.self, forKey: .requestId),
-                decision: try container.decode(ApprovalDecisionKind.self, forKey: .decision)
+                decision: try container.decodeIfPresent(ApprovalDecisionKind.self, forKey: .decision)
             )
         case "rate_limit.updated":
             self = .rateLimitUpdated

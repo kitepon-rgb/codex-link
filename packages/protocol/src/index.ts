@@ -145,7 +145,7 @@ export type CodexLinkEvent =
       status: "completed" | "failed" | "declined";
     }
   | { type: "approval.requested"; request: ApprovalRequest }
-  | { type: "approval.resolved"; requestId: RequestId; decision: ApprovalDecisionKind }
+  | { type: "approval.resolved"; requestId: RequestId; decision?: ApprovalDecisionKind }
   | { type: "rate_limit.updated"; userId: UserId; usedPercent: number | null }
   | { type: "diagnostic.reported"; diagnostic: DiagnosticEvent }
   | { type: "error.reported"; scope: "host" | "relay" | "codex"; message: string };

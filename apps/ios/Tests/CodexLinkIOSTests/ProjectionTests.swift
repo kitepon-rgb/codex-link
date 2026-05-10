@@ -201,6 +201,30 @@ final class ProjectionTests: XCTestCase {
         )
     }
 
+    func testDecodesApprovalResolvedWithoutDecision() throws {
+        let json = """
+        {
+          "type": "host.event",
+          "event": {
+            "sequence": 2,
+            "hostId": "host_1",
+            "receivedAt": "2026-05-10T00:00:00Z",
+            "event": {
+              "type": "approval.resolved",
+              "requestId": "approval_1"
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let message = try JSONDecoder().decode(RelayServerMessage.self, from: json)
+
+        guard case .hostEvent(let cached) = message else {
+            return XCTFail("Expected host.event")
+        }
+        XCTAssertEqual(cached.event, .approvalResolved(requestId: "approval_1", decision: nil))
+    }
+
     func testDecodesRelayCacheGapError() throws {
         let json = """
         {

@@ -147,6 +147,53 @@ describe("MacHostSessionRunner", () => {
     ]);
   });
 
+  it("clears approval requests when app-server resolves them without a local decision", () => {
+    const events: CodexLinkEvent[] = [];
+    const codex = fakeCodexClient(async () => ({}));
+    const runner = new MacHostSessionRunner({
+      config,
+      codex,
+      relay: { sendHostEvent: (event) => events.push(event) },
+    });
+
+    runner.handleCodexServerRequest({
+      id: "approval_1",
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "item_1",
+        command: "pnpm test",
+        cwd: "/repo",
+        availableDecisions: ["accept", "decline"],
+      },
+    });
+    runner.handleCodexNotification({
+      method: "serverRequest/resolved",
+      params: { threadId: "thread_1", requestId: "approval_1" },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "approval.requested",
+        request: {
+          id: "approval_1",
+          kind: "command_execution",
+          threadId: "thread_1",
+          turnId: "turn_1",
+          itemId: "item_1",
+          title: "Command approval",
+          detail: "pnpm test\ncwd: /repo",
+          availableDecisions: ["accept", "decline"],
+        },
+      },
+      {
+        type: "approval.resolved",
+        requestId: "approval_1",
+      },
+    ]);
+  });
+
   it("restores thread, lists threads, and lists turn items through codex app-server", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const events: CodexLinkEvent[] = [];
