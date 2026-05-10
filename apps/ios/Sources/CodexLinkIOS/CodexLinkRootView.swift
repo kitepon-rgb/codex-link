@@ -25,6 +25,8 @@ public struct CodexLinkRootView: View {
                 HostPickerView(
                     hosts: sortedHosts,
                     projectsByHost: projection.projectsByHost,
+                    connectionState: connectionState,
+                    latestError: projection.latestError,
                     select: selectHost,
                     pair: pairHost
                 )
@@ -72,6 +74,8 @@ public struct CodexLinkRootView: View {
 private struct HostPickerView: View {
     let hosts: [Host]
     let projectsByHost: [String: [ProjectRef]]
+    let connectionState: CodexLinkConnectionState
+    let latestError: String?
     let select: (Host) -> Void
     let pair: (String) -> Void
 
@@ -79,6 +83,24 @@ private struct HostPickerView: View {
 
     var body: some View {
         List {
+            if connectionState != .connected || latestError != nil {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        StatusPill(
+                            text: connectionText,
+                            icon: connectionIcon,
+                            color: connectionColor
+                        )
+                        if let latestError {
+                            Text(latestError)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
             Section("Pair Host") {
                 HStack(spacing: 10) {
                     TextField("Pairing code", text: $pairingCode)
@@ -140,6 +162,57 @@ private struct HostPickerView: View {
             return first.name
         }
         return "\(first.name) + \(projects.count - 1)"
+    }
+
+    private var connectionText: String {
+        switch connectionState {
+        case .disconnected:
+            return "Disconnected"
+        case .connecting:
+            return "Connecting"
+        case .connected:
+            return "Connected"
+        case .reconnecting:
+            return "Reconnecting"
+        case .restoring:
+            return "Restoring"
+        case .restored:
+            return "Restored"
+        case .failed:
+            return "Connection failed"
+        }
+    }
+
+    private var connectionIcon: String {
+        switch connectionState {
+        case .disconnected:
+            return "wifi.slash"
+        case .connecting:
+            return "antenna.radiowaves.left.and.right"
+        case .connected:
+            return "wifi"
+        case .reconnecting:
+            return "arrow.triangle.2.circlepath"
+        case .restoring:
+            return "clock.arrow.circlepath"
+        case .restored:
+            return "checkmark.icloud"
+        case .failed:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    private var connectionColor: Color {
+        switch connectionState {
+        case .disconnected:
+            return .secondary
+        case .connecting, .reconnecting, .restoring:
+            return .teal
+        case .connected, .restored:
+            return .green
+        case .failed:
+            return .red
+        }
     }
 }
 
