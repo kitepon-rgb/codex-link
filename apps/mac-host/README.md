@@ -22,7 +22,7 @@ Codex の実行、副作用、ローカルファイルアクセスはこの Host
 
 Phase 3 の最初として、Host の最小 package を置いています。
 
-- `src/config.ts`: `~/.codex-link/host.json` の読み込み。
+- `src/config.ts`: `~/.codex-link/host.json` の読み込みと macOS Keychain からの device token 解決。
 - `src/capabilities.ts`: `codex --version`、project path preflight、app-server `model/list` / `experimentalFeature/list` / `config/read` の capabilities 収集。
 - `src/codex.ts`: `codex app-server` stdio 起動と `initialize` / `initialized` handshake。
 - `src/codex-events.ts`: app-server notification / server request / thread read response を Codex Link event へ正規化。
@@ -32,7 +32,7 @@ Phase 3 の最初として、Host の最小 package を置いています。
 
 ## セットアップ placeholder
 
-Relay に `CODEX_LINK_HOST_BOOTSTRAP_TOKEN` が設定されている場合は、installer が Host bootstrap API へ接続し、`userId`、`deviceId`、`deviceToken`、`hostId` を受け取って Host config を作ります。Host は Relay WebSocket 接続時に `deviceToken` を bearer credential として送ります。`host.json` には bearer credential が入るため、installer は `chmod 600` を設定し、Host runtime も group / others readable な config を拒否します。
+Relay に `CODEX_LINK_HOST_BOOTSTRAP_TOKEN` が設定されている場合は、installer が Host bootstrap API へ接続し、`userId`、`deviceId`、`deviceToken`、`hostId` を受け取って Host config を作ります。Host は Relay WebSocket 接続時に Keychain から解決した `deviceToken` を bearer credential として送ります。installer は `deviceToken` 本体を macOS Keychain に保存し、`host.json` には `deviceTokenKeychain` reference だけを書きます。`host.json` は `chmod 600` を設定し、Host runtime も group / others readable な config を拒否します。
 
 ```bash
 CODEX_LINK_RELAY_URL=https://relay.example.com \
@@ -60,3 +60,5 @@ pnpm --filter @codex-link/mac-host exec codex-link-mac-host ~/.codex-link/host.j
 ```
 
 起動時に `Codex Link iPhone pairing code: ABCD-EF12 (...)` の形で短命 code を表示します。iPhone app の Host picker でこの code を入力すると、MVP placeholder device session にその Host への `operator` HostAccess が付与されます。
+
+既存の `deviceToken` inline config は互換用に読み込めますが、新規 installer output では使いません。Keychain service は既定で `dev.codex-link.mac-host.device-token` です。必要な場合だけ `CODEX_LINK_KEYCHAIN_SERVICE` で変更します。
