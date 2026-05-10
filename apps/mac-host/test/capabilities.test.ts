@@ -7,7 +7,63 @@ describe("readCodexAppServerCapabilities", () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const codex = fakeCodexClient(async (method, params) => {
       requests.push({ method, params });
-      return { method };
+      if (method === "model/list") {
+        return {
+          data: [
+            {
+              id: "gpt-test",
+              displayName: "GPT Test",
+              description: "Test model",
+              hidden: false,
+              isDefault: true,
+              defaultReasoningEffort: "medium",
+              availabilityNux: { message: "do not relay" },
+            },
+          ],
+          nextCursor: null,
+        };
+      }
+      if (method === "experimentalFeature/list") {
+        return {
+          data: [
+            {
+              name: "shell_tool",
+              stage: "stable",
+              displayName: "Shell tool",
+              enabled: true,
+              defaultEnabled: true,
+              announcement: "do not relay",
+            },
+          ],
+        };
+      }
+      if (method === "config/read") {
+        return {
+          config: {
+            model: "gpt-test",
+            model_reasoning_effort: "medium",
+            approval_policy: "on-request",
+            sandbox_mode: "workspace-write",
+            features: {
+              shell_tool: true,
+              remote_control: false,
+              note: "do not relay",
+            },
+            projects: {
+              "/repo": {
+                trust_level: "trusted",
+                local_secret: "do not relay",
+              },
+            },
+            mcp_servers: {
+              private: { url: "https://private.example.test/mcp" },
+            },
+          },
+          origins: { model: { file: "/Users/me/.codex/config.toml" } },
+          layers: [{ config: { secret: "do not relay" } }],
+        };
+      }
+      throw new Error(`Unexpected request: ${method}`);
     });
 
     await expect(
@@ -21,9 +77,41 @@ describe("readCodexAppServerCapabilities", () => {
         projects: [{ id: "project_1" as never, name: "Codex Link", path: "/repo" }],
       } satisfies MacHostConfig),
     ).resolves.toEqual({
-      models: { method: "model/list" },
-      experimentalFeatures: { method: "experimentalFeature/list" },
-      config: { method: "config/read" },
+      models: {
+        data: [
+          {
+            id: "gpt-test",
+            displayName: "GPT Test",
+            description: "Test model",
+            hidden: false,
+            isDefault: true,
+            defaultReasoningEffort: "medium",
+          },
+        ],
+        nextCursor: null,
+      },
+      experimentalFeatures: {
+        data: [
+          {
+            name: "shell_tool",
+            stage: "stable",
+            displayName: "Shell tool",
+            enabled: true,
+            defaultEnabled: true,
+          },
+        ],
+      },
+      config: {
+        model: "gpt-test",
+        modelReasoningEffort: "medium",
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        features: {
+          shell_tool: true,
+          remote_control: false,
+        },
+        projectTrustLevel: "trusted",
+      },
     });
 
     expect(requests).toEqual([
