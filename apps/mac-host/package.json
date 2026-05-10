@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "tsc --noEmit",
+    "start": "tsx src/cli.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@codex-link/relay": "workspace:*",
-    "@types/ws": "^8.18.1"
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.21.0"
   }
 }

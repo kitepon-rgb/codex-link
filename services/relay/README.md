@@ -193,11 +193,10 @@ pnpm --filter @codex-link/relay test
 pnpm --filter @codex-link/relay typecheck
 ```
 
-ローカルで Relay HTTP/WebSocket server を起動する場合は、開発確認として以下を使います。本番/共有サーバーでは Docker コンテナで起動してください。
+ローカルで Relay HTTP/WebSocket server を起動する場合も、MVP の通常導線は Docker コンテナです。repo root の compose は `127.0.0.1:3000` にだけ公開し、Host bootstrap token は既定で `codex-link-local-dev-bootstrap-token` を使います。
 
 ```bash
-pnpm --filter @codex-link/relay build
-PORT=3000 pnpm --filter @codex-link/relay start
+docker-compose up --build relay
 ```
 
 Docker image:

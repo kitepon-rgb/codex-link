@@ -5,7 +5,8 @@ import { startMacHostCodexAppServer } from "./codex.js";
 import { MacHostRelayClient } from "./relay-client.js";
 import { MacHostSessionRunner } from "./session.js";
 
-const config = await loadMacHostConfig(process.argv[2]);
+const configPath = process.argv.slice(2).find((argument) => argument !== "--");
+const config = await loadMacHostConfig(configPath);
 let runner: MacHostSessionRunner | null = null;
 const relay = new MacHostRelayClient({
   config,

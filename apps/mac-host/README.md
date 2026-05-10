@@ -56,7 +56,7 @@ apps/mac-host/scripts/install.sh
 起動:
 
 ```bash
-pnpm --filter @codex-link/mac-host exec codex-link-mac-host ~/.codex-link/host.json
+pnpm --filter @codex-link/mac-host start -- ~/.codex-link/host.json
 ```
 
 起動時に `Codex Link iPhone pairing code: ABCD-EF12 (...)` の形で短命 code を表示します。iPhone app の Host picker でこの code を入力すると、MVP placeholder device session にその Host への `operator` HostAccess が付与されます。

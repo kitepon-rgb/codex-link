@@ -48,7 +48,7 @@ if [[ -n "${CODEX_LINK_HOST_BOOTSTRAP_TOKEN:-}" ]]; then
     const url = new URL(process.env.CODEX_LINK_RELAY_URL);
     if (url.protocol === "ws:") url.protocol = "http:";
     if (url.protocol === "wss:") url.protocol = "https:";
-    url.pathname = `${url.pathname.replace(/\\/$/, "")}/api/host-bootstrap`;
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/api/host-bootstrap`;
     url.search = "";
     process.stdout.write(url.toString());
   ')"
@@ -189,4 +189,4 @@ fi
 chmod 600 "$CONFIG_FILE"
 
 echo "Codex Link Host config written: $CONFIG_FILE"
-echo "Start with: pnpm --filter @codex-link/mac-host exec codex-link-mac-host $CONFIG_FILE"
+echo "Start with: pnpm --filter @codex-link/mac-host start -- $CONFIG_FILE"

@@ -68,6 +68,27 @@ pnpm --filter @codex-link/relay typecheck
 pnpm --filter @codex-link/relay test
 ```
 
+## MVP ローカル起動
+
+Relay は Docker コンテナとして起動します。ローカル compose は `127.0.0.1:3000` にだけ公開し、Host bootstrap token は既定で `codex-link-local-dev-bootstrap-token` を使います。共有サーバーでは必ず `CODEX_LINK_HOST_BOOTSTRAP_TOKEN` を別値にしてください。
+
+```bash
+docker-compose up --build relay
+```
+
+別 terminal で Mac Host config を作成して起動します。
+
+```bash
+CODEX_LINK_RELAY_URL=http://127.0.0.1:3000 \
+CODEX_LINK_HOST_BOOTSTRAP_TOKEN=codex-link-local-dev-bootstrap-token \
+CODEX_LINK_PROJECT_PATH="$PWD" \
+apps/mac-host/scripts/install.sh
+
+pnpm --filter @codex-link/mac-host start -- ~/.codex-link/host.json
+```
+
+iOS Simulator の dev app は `http://127.0.0.1:3000` を向いています。Host が表示する pairing code を iPhone app の `Pair Host` に入力すると、Relay 経由で Host へ command が流れます。
+
 ## 基本決定
 
 - iPhone app は SSH クライアントにしない。
