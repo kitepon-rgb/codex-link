@@ -37,6 +37,8 @@
 	<string>http://127.0.0.1:3000</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan a Codex Link pairing QR shown by your Mac to pair this iPhone with the Mac's Codex.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

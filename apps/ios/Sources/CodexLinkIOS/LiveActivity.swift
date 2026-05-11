@@ -17,8 +17,51 @@ public enum CodexLinkDeepLinkError: Error, Equatable, LocalizedError, Sendable {
     }
 }
 
+public struct CodexLinkPairingPayload: Equatable, Sendable {
+    public let pairingCode: String
+    public let relayURL: URL?
+    public let hostId: String?
+    public let chatgptEmail: String?
+
+    public init(
+        pairingCode: String,
+        relayURL: URL? = nil,
+        hostId: String? = nil,
+        chatgptEmail: String? = nil
+    ) {
+        self.pairingCode = pairingCode
+        self.relayURL = relayURL
+        self.hostId = hostId
+        self.chatgptEmail = chatgptEmail
+    }
+}
+
 public enum CodexLinkDeepLink {
     public static let defaultScheme = "codexlink"
+
+    public static func pairing(
+        from url: URL,
+        expectedScheme: String = defaultScheme
+    ) -> CodexLinkPairingPayload? {
+        guard url.scheme == expectedScheme, url.host == "pair" else {
+            return nil
+        }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        var values: [String: String] = [:]
+        for item in components?.queryItems ?? [] where values[item.name] == nil {
+            values[item.name] = item.value
+        }
+        guard let code = values["code"], !code.isEmpty else {
+            return nil
+        }
+        let relayURL = values["relayUrl"].flatMap(URL.init(string:))
+        return CodexLinkPairingPayload(
+            pairingCode: code,
+            relayURL: relayURL,
+            hostId: values["hostId"],
+            chatgptEmail: values["email"]
+        )
+    }
 
     public static func openThreadURL(
         hostId: String,

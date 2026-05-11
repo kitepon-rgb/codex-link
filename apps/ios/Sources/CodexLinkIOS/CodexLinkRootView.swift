@@ -80,6 +80,8 @@ private struct HostPickerView: View {
     let pair: (String) -> Void
 
     @State private var pairingCode = ""
+    @State private var isPresentingScanner = false
+    @State private var scannerError: String?
 
     var body: some View {
         List {
@@ -102,27 +104,64 @@ private struct HostPickerView: View {
                 }
             }
             Section("Pair Host") {
-                HStack(spacing: 10) {
-                    TextField("Pairing code", text: $pairingCode)
-                        #if os(iOS)
-                        .textInputAutocapitalization(.characters)
-                        .keyboardType(.asciiCapable)
-                        #endif
-                    Button {
-                        let code = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !code.isEmpty else {
-                            return
+                #if os(iOS)
+                Button {
+                    scannerError = nil
+                    isPresentingScanner = true
+                } label: {
+                    Label("Scan QR from Mac", systemImage: "qrcode.viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityLabel("Scan pairing QR")
+                if let scannerError {
+                    Text(scannerError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                #endif
+                DisclosureGroup("Enter code manually") {
+                    HStack(spacing: 10) {
+                        TextField("Pairing code", text: $pairingCode)
+                            #if os(iOS)
+                            .textInputAutocapitalization(.characters)
+                            .keyboardType(.asciiCapable)
+                            #endif
+                        Button {
+                            let code = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !code.isEmpty else {
+                                return
+                            }
+                            pair(code)
+                            pairingCode = ""
+                        } label: {
+                            Image(systemName: "link.badge.plus")
                         }
-                        pair(code)
-                        pairingCode = ""
-                    } label: {
-                        Image(systemName: "link.badge.plus")
+                        .buttonStyle(.borderedProminent)
+                        .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityLabel("Pair Host")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityLabel("Pair Host")
                 }
             }
+            #if os(iOS)
+            .sheet(isPresented: $isPresentingScanner) {
+                CodexLinkPairingScannerView(
+                    onPairingPayload: { payload in
+                        isPresentingScanner = false
+                        pair(payload.pairingCode)
+                    },
+                    onError: { error in
+                        scannerError = error.localizedDescription
+                        isPresentingScanner = false
+                    },
+                    onCancel: {
+                        isPresentingScanner = false
+                    }
+                )
+                .ignoresSafeArea()
+            }
+            #endif
             ForEach(hosts) { host in
                 Button {
                     select(host)

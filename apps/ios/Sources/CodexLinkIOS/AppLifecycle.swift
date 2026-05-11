@@ -120,6 +120,10 @@ public final class CodexLinkAppViewModel: ObservableObject {
     }
 
     public func openDeepLink(_ url: URL) {
+        if let pairingPayload = CodexLinkDeepLink.pairing(from: url) {
+            handle(.pairHost(pairingCode: pairingPayload.pairingCode))
+            return
+        }
         guard let deepLinkedSelection = CodexLinkDeepLink.selection(from: url) else {
             return
         }
@@ -206,7 +210,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
         configuration: CodexLinkAppRuntimeConfiguration
     ) async throws -> CodexLinkDeviceSession {
         if let stored = try deviceSessionStore.loadDeviceSession() {
-            return stored
+            return await maybeRotateDeviceCredential(stored, now: Date())
         }
         guard let deviceSessionClient else {
             throw CodexLinkAppLifecycleError.missingConfiguration(
@@ -219,6 +223,55 @@ public final class CodexLinkAppViewModel: ObservableObject {
         )
         try deviceSessionStore.saveDeviceSession(registered)
         return registered
+    }
+
+    static let deviceCredentialRotationThreshold: TimeInterval = 7 * 24 * 60 * 60
+
+    private nonisolated func parseISO8601(_ value: String) -> Date? {
+        let withMillis = ISO8601DateFormatter()
+        withMillis.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withMillis.date(from: value) {
+            return date
+        }
+        let withoutMillis = ISO8601DateFormatter()
+        withoutMillis.formatOptions = [.withInternetDateTime]
+        return withoutMillis.date(from: value)
+    }
+
+    func maybeRotateDeviceCredential(
+        _ session: CodexLinkDeviceSession,
+        now: Date
+    ) async -> CodexLinkDeviceSession {
+        guard let deviceSessionClient,
+              let expiryString = session.deviceTokenExpiresAt,
+              let expiresAt = parseISO8601(expiryString)
+        else {
+            return session
+        }
+        let remaining = expiresAt.timeIntervalSince(now)
+        guard remaining < Self.deviceCredentialRotationThreshold else {
+            return session
+        }
+        do {
+            let rotated = try await deviceSessionClient.rotateDeviceCredential(
+                userId: session.userId,
+                deviceId: session.deviceId,
+                deviceToken: session.deviceToken
+            )
+            let refreshed = CodexLinkDeviceSession(
+                relayUrl: rotated.relayUrl,
+                userId: rotated.userId,
+                deviceId: rotated.deviceId,
+                deviceToken: rotated.deviceToken,
+                deviceTokenExpiresAt: rotated.deviceTokenExpiresAt,
+                displayName: session.displayName,
+                deviceName: session.deviceName
+            )
+            try? deviceSessionStore.saveDeviceSession(refreshed)
+            return refreshed
+        } catch {
+            return session
+        }
     }
 
     private func pairHost(pairingCode: String) async {

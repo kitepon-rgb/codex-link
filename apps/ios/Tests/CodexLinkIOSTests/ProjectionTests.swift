@@ -413,6 +413,33 @@ final class ProjectionTests: XCTestCase {
         )
     }
 
+    func testParsesPairingDeepLinkWithChatGptEmail() throws {
+        let url = URL(string: "codexlink://pair?relayUrl=http%3A%2F%2F127.0.0.1%3A3000&hostId=host_1&code=ABCD-1234&email=alice%40example.test")!
+        let payload = CodexLinkDeepLink.pairing(from: url)
+        XCTAssertEqual(payload, CodexLinkPairingPayload(
+            pairingCode: "ABCD-1234",
+            relayURL: URL(string: "http://127.0.0.1:3000"),
+            hostId: "host_1",
+            chatgptEmail: "alice@example.test"
+        ))
+    }
+
+    func testParsesPairingDeepLinkWithoutOptionalFields() throws {
+        let url = URL(string: "codexlink://pair?code=ZZZZ-0000")!
+        let payload = CodexLinkDeepLink.pairing(from: url)
+        XCTAssertEqual(payload, CodexLinkPairingPayload(pairingCode: "ZZZZ-0000"))
+    }
+
+    func testRejectsPairingDeepLinkWithoutCode() throws {
+        let url = URL(string: "codexlink://pair?hostId=host_1")!
+        XCTAssertNil(CodexLinkDeepLink.pairing(from: url))
+    }
+
+    func testRejectsNonPairingDeepLinkAsPairing() throws {
+        let url = URL(string: "codexlink://thread?hostId=host_1&projectId=project_1&threadId=thread_1")!
+        XCTAssertNil(CodexLinkDeepLink.pairing(from: url))
+    }
+
     func testParsesLiveActivityDeepLinkSelection() throws {
         let url = try CodexLinkDeepLink.openThreadURL(
             hostId: "host_1",
@@ -1018,6 +1045,76 @@ final class ProjectionTests: XCTestCase {
         XCTAssertNil(bookmarkStore.bookmark)
         XCTAssertEqual(model.selection, CodexLinkSessionSelection())
         XCTAssertEqual(model.connectionState, .disconnected)
+    }
+
+    @MainActor
+    func testRotatesDeviceCredentialWhenExpiryIsClose() async throws {
+        let now = ISO8601DateFormatter().date(from: "2026-05-11T00:00:00Z")!
+        let nearExpiry = ISO8601DateFormatter().date(from: "2026-05-13T00:00:00Z")! // 2 days away
+        let isoOut = ISO8601DateFormatter()
+        isoOut.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let stored = CodexLinkDeviceSession(
+            relayUrl: "http://127.0.0.1:3000",
+            userId: "usr_1",
+            deviceId: "dev_1",
+            deviceToken: "old_token",
+            deviceTokenExpiresAt: isoOut.string(from: nearExpiry),
+            displayName: "Tester",
+            deviceName: "Sim"
+        )
+        let deviceStore = InMemoryDeviceSessionStore(deviceSession: stored)
+        let deviceClient = MockDeviceSessionClient(result: stored)
+        let model = CodexLinkAppViewModel(
+            configuration: CodexLinkAppRuntimeConfiguration(
+                relayURL: URL(string: "http://127.0.0.1:3000")!,
+                displayName: "Tester",
+                deviceName: "Sim"
+            ),
+            deviceSessionStore: deviceStore,
+            deviceSessionClient: deviceClient,
+            relayClientFactory: { _ in MockAppRelayClient() }
+        )
+
+        let result = await model.maybeRotateDeviceCredential(stored, now: now)
+
+        XCTAssertEqual(deviceClient.rotatedDeviceToken, "old_token")
+        XCTAssertEqual(result.deviceToken, "rotated_device_token")
+        XCTAssertEqual(deviceStore.savedDeviceSession?.deviceToken, "rotated_device_token")
+    }
+
+    @MainActor
+    func testKeepsDeviceCredentialWhenExpiryIsFarAway() async throws {
+        let now = ISO8601DateFormatter().date(from: "2026-05-11T00:00:00Z")!
+        let farExpiry = ISO8601DateFormatter().date(from: "2026-08-01T00:00:00Z")! // ~80 days away
+        let isoOut = ISO8601DateFormatter()
+        isoOut.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let stored = CodexLinkDeviceSession(
+            relayUrl: "http://127.0.0.1:3000",
+            userId: "usr_1",
+            deviceId: "dev_1",
+            deviceToken: "fresh_token",
+            deviceTokenExpiresAt: isoOut.string(from: farExpiry),
+            displayName: "Tester",
+            deviceName: "Sim"
+        )
+        let deviceStore = InMemoryDeviceSessionStore(deviceSession: stored)
+        let deviceClient = MockDeviceSessionClient(result: stored)
+        let model = CodexLinkAppViewModel(
+            configuration: CodexLinkAppRuntimeConfiguration(
+                relayURL: URL(string: "http://127.0.0.1:3000")!,
+                displayName: "Tester",
+                deviceName: "Sim"
+            ),
+            deviceSessionStore: deviceStore,
+            deviceSessionClient: deviceClient,
+            relayClientFactory: { _ in MockAppRelayClient() }
+        )
+
+        let result = await model.maybeRotateDeviceCredential(stored, now: now)
+
+        XCTAssertNil(deviceClient.rotatedDeviceToken)
+        XCTAssertEqual(result.deviceToken, "fresh_token")
+        XCTAssertNil(deviceStore.savedDeviceSession)
     }
 }
 
