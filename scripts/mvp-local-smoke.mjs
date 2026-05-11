@@ -26,6 +26,9 @@ Options:
   --turn                      Also start a real Codex turn and wait for running status.
   --wait-complete             Combined with --turn, also wait for completed/failed/canceled.
                               Verifies the rollout persists to ~/.codex/sessions (one LLM call).
+  --list-threads              After subscribe, send codex.thread.list and report how many
+                              thread.started events come back (verifies cross-source visibility
+                              of CLI/VSCode-created threads from iPhone perspective).
   --reconnect                 After subscribe, drop the WS and resubscribe with afterSequence.
   --revoke-host-access        After the run, owner revokes iPhone HostAccess via HTTP and
                               the iPhone WS must observe HOST_ACCESS_DENIED.
@@ -43,6 +46,7 @@ function parseArgs(argv) {
     timeoutMs: 120000,
     turn: false,
     waitComplete: false,
+    listThreads: false,
     reconnect: false,
     revokeHostAccess: false,
     keepCompose: false,
@@ -68,12 +72,15 @@ function parseArgs(argv) {
       args.turn = true;
     } else if (arg === "--wait-complete") {
       args.waitComplete = true;
+    } else if (arg === "--list-threads") {
+      args.listThreads = true;
     } else if (arg === "--reconnect") {
       args.reconnect = true;
     } else if (arg === "--revoke-host-access") {
       args.revokeHostAccess = true;
     } else if (arg === "--full") {
       args.turn = true;
+      args.listThreads = true;
       args.reconnect = true;
       args.revokeHostAccess = true;
     } else if (arg === "--keep-compose") {
@@ -239,6 +246,47 @@ async function main() {
       applyReplayState(replay, message);
     }
 
+    let listThreads = null;
+    if (args.listThreads) {
+      const projectId = hostConfig.projects[0].id;
+      clientSocket.send(JSON.stringify({
+        type: "client.toHost",
+        hostId: pairing.hostId,
+        payload: {
+          type: "codex.thread.list",
+          projectId,
+          limit: 50,
+        },
+      }));
+      const drainDeadline = Math.min(Date.now() + 5000, deadline);
+      let projectThreads = 0;
+      let totalThreadEvents = 0;
+      while (Date.now() < drainDeadline) {
+        let message;
+        try {
+          message = await reader.read(drainDeadline);
+        } catch (error) {
+          if (error instanceof Error && /timed out$/.test(error.message)) {
+            break;
+          }
+          throw error;
+        }
+        if (message.type === "host.event" && message.event?.event?.type === "thread.started") {
+          totalThreadEvents += 1;
+          if (message.event.event.thread?.projectId === projectId) {
+            projectThreads += 1;
+          }
+        }
+        if (typeof message.event?.sequence === "number") {
+          replay.latestRelaySequence = Math.max(
+            replay.latestRelaySequence ?? 0,
+            message.event.sequence,
+          );
+        }
+      }
+      listThreads = { projectThreads, totalThreadEvents };
+    }
+
     if (args.turn) {
       clientSocket.send(JSON.stringify({
         type: "client.toHost",
@@ -322,6 +370,7 @@ async function main() {
       deviceId: deviceSession.deviceId,
       pairingRole: pairing.role,
       replay,
+      listThreads,
       reconnect,
       revoke,
       startedCompose,
