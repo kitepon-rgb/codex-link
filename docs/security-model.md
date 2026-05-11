@@ -74,7 +74,26 @@ MVP の iPhone pairing は placeholder 実装です。Host が認証済み WebSo
 
 MVP の device revocation も placeholder 実装です。Relay は revoke API を device credential で保護し、revoke 済み device の credential を削除し、新規接続、pairing、既存 WebSocket session からの message を拒否し、active session を切断します。ただし外部 IdP、短命 user session、永続 credential storage はまだありません。
 
-この pairing / revocation / device credential は本物の multi-user authentication の代替ではありません。外部 IdP、短命 user session、production 向け credential lifecycle などは hardening phase で完成させます。
+この pairing / revocation / device credential は本物の multi-user authentication の代替ではありません。Phase 8 で B-1 + QR + 恒久ペアリングに置き換えます (下記)。
+
+### Phase 8: B-1 + QR + 恒久ペアリング (本物の multi-user 認証)
+
+外部 IdP integration を追加せず、Codex CLI が既に持っている ChatGPT OAuth 認証を本人確認の根拠として再利用します (B-1)。新しい IdP (Google / Apple / GitHub 等) の OAuth client を Codex Link 側で立てません。これは「ユーザーが既に Codex CLI に login 済み = 二重 login 不要」という最小摩擦を狙う設計判断であり、ChatGPT の login 手段が Google / Apple / メアドのどれであっても (ChatGPT account 側で `email` 文字列が確定していれば) 等しく扱えます。
+
+Phase 8 の認証モデル:
+
+- Mac Host bootstrap は `codex app-server` への `account/read` (`AuthMode = chatgpt`) で **ChatGPT account email / accountId / planType** を取得し、Relay の Host 登録に同梱します。`apiKey` モードや未認証状態の場合は ChatGPT account 不在として扱い、Phase 7 placeholder 動作 (匿名 owner user) にフォールバックします。Mac 上の Codex の認証状態が「Mac の本人確認」の信用根拠になります。
+- Relay の `Host` model は `chatgptAccountId` と `chatgptEmail` を optional フィールドとして持ち、`HostPairingCode` にもこの紐付けを伝搬させます。grant 時の `HostAccess` audit metadata に「`pair via chatgpt:<accountId>`」として記録し、後から「どの ChatGPT account に紐付いたペアか」を照会できるようにします。
+- Mac Host は pairing code 発行と同時に **QR コードを起動端末画面に表示** します。QR の payload は `codexlink://pair?relayUrl=<url>&hostId=<hostId>&code=<short-code>&accountId=<chatgptAccountId>` の deep link 1 本で、iPhone はカメラを向けるだけで Relay URL / Host ID / pairing code / 紐付く ChatGPT account を一括取得します。短い code 入力は debug 経路に降格させ、通常 UI からは外します。
+- iPhone は ChatGPT OAuth client にはなりません (公開 third-party flow が無いため)。iPhone は QR を読み取り、`POST /api/device-session/pair` を従来通りの flow で叩くだけです。「私はこの ChatGPT account を持つ Mac の所有者から pairing code を渡された」ことを Relay に主張する形になります。Mac の認証状態を信用する設計です。
+- 恒久性は 3 層で担保します:
+  1. **HostAccess** (= ペアの本体) は明示 revoke まで永続。Phase 7 から変更なし。
+  2. **Device credential** は Keychain に永続保存し、TTL の 70% を経過した時点で iPhone が **無音で `/api/device-credential/rotate`** を叩いて差し替えます。失敗は次回 reconnect で retry、ユーザーには再 pair を求めません。`CODEX_LINK_DEVICE_CREDENTIAL_TTL_MS` の既定は MVP の 30 日から 90 日 (短くて 90 日、長くて 365 日のレンジで運用) に伸ばします。
+  3. **WebSocket session** は揮発で、reconnect は `subscribeHost { afterSequence }` で gap 無し復旧。MVP 既に実装済。
+- iOS app は Keychain access に entitlement section を必要とします (`-34018 errSecMissingEntitlement` 回避)。最小 `<dict/>` 空の `CodexLinkApp.entitlements` を target に当てて embed します。`keychain-access-groups` の追加は app と widget 間で credential 共有が必要になった時点で別 PR で扱います。
+- iPhone 側 device credential を紛失した場合 (アプリ削除 / Keychain 破損 / 他端末への移行) は QR 再スキャンで再 pair します。Mac Host は ChatGPT account 認証が生きている限り何度でも pairing code を再発行できるため、ユーザー側の追加操作はありません。
+
+Phase 8 が境界を変えるのは「pair の発行根拠を ChatGPT account に固定し、UI を QR + 恒久 credential に置き換える」点だけで、Relay の broker-only 性、`~/.codex` 不所持、Codex 不実行といった既存原則には影響しません。Codex Link 自身は ChatGPT のトークンや refresh token を保存せず、`account/read` で取れる email / accountId / planType だけを Host metadata として保持します。
 
 MVP の Host sharing / ACL は、既存 HostAccess の owner role を持つ user だけが `operator` または `viewer` を grant / revoke できる段階です。request body の `ownerUserId` / `ownerDeviceId`、bearer device credential、既存 ACL を照合しますが、production authentication や短命 session credential はまだ未完成です。owner access は sharing API から revoke しません。`viewer` は Host event cache を購読できますが、Host への command routing は `owner` / `operator` だけに許可します。
 

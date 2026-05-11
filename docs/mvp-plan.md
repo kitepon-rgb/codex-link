@@ -287,6 +287,35 @@ docs/
   - audit metadata には token、pairing code 本体、Host command payload、Codex prompt 本文、approval payload を残さない。
   - E2E privacy は未実装として明示する。
 
+## Phase 8: B-1 + QR 恒久ペアリング (Phase 7 placeholder からの昇格)
+
+Phase 7 の MVP placeholder (pairing code 手入力 + per-device credential のみ) を、ユーザーが「Mac で起動 → iPhone でカメラを向ける → 完了」だけで恒久接続できる本物のペアリングに置き換える。Codex CLI が既に持っている ChatGPT OAuth 認証を信用根拠として使い、新しい IdP integration は足さない (B-1 + QR)。
+
+設計の前提:
+
+- pair の本体は **HostAccess (Relay 永続)** で、これは MVP 既に「明示 revoke まで残る」設計になっている。Phase 8 で変えるのは「pair の発行を `ChatGPT account` に紐付け、UI を QR スキャンに変える」部分。
+- iPhone は ChatGPT OAuth client にならない (公式 third-party flow が無いため)。Mac Host が `account/read` で確定した ChatGPT account を「Mac の本人確認の根拠」として Relay に登録する。iPhone はその根拠を信用する形でペア。
+- credential は Keychain に永続、TTL が来る前に iPhone が無音で rotate する。ユーザーには再 pair を求めない。
+
+進行状況 (この checkbox を更新することで TODO を兼ねる):
+
+- [x] iOS: `CodexLinkApp.entitlements` を追加し `CODE_SIGN_ENTITLEMENTS` を当てて、Simulator / 実機での Keychain access (`-34018 errSecMissingEntitlement`) を解消する。entitlements は最小 (空 dict + 必要なら `keychain-access-groups`) から。
+- [x] Mac Host: `account/read` で ChatGPT account の email / planType を取得し、Relay の Host registration / pairing code 発行時にそれを添付する。`apiKey` モードの場合は ChatGPT account 不在として扱う (=従来 placeholder 動作にフォールバック)。
+- [x] Protocol / Relay: `Host` model に `chatgptAccount` (optional) を持たせ、`HostPairingCode` にも紐付ける。`/api/device-session/pair` redeem 時に Relay が「この Host の ChatGPT account 紐付き」を audit metadata でも参照可能にする。
+- [x] Mac Host: pairing code を発行したら、CLI 出力に加えて **QR コード (ターミナル ANSI)** を端末画面に出す。QR の payload は `codexlink://pair?relayUrl=...&hostId=...&code=...&email=...` の deep link 1 本にして iPhone 1 スキャンで完結させる。
+- [x] iPhone: AVFoundation ベースの QR スキャナ (`CodexLinkPairingScannerView`) を `Pair Host` UI に追加し、読み取り結果から `client.pair(...)` を呼ぶ。手入力経路は disclosure 内に降格、通常 UI からは外す。
+- [x] iPhone: `CodexLinkAppViewModel.maybeRotateDeviceCredential` で「期限まで 7 日未満なら無音で `/api/device-credential/rotate` を呼んで Keychain を更新する」auto rotate を入れる。失敗時は次回 launch で retry、明示 error UI には出さない (true permanent 体験のため)。
+- [x] Relay: `CODEX_LINK_DEVICE_CREDENTIAL_TTL_MS` の既定値を MVP の 30 日から 90 日に伸ばす。短い既定が「恒久」体験を壊していたため。明示 revoke はそのまま即時失効が利く。
+- [ ] iPhone / Mac Host: ペアの「永続性」を裏付ける end-to-end smoke を追加する。`mvp-local-smoke.mjs` に「pair → credential 保存 → app 再起動相当 (新規 WS 再接続) → credential rotate → pair 維持」のシナリオを足す。
+- [x] docs: `security-model.md` の "認証ルール" を Phase 8 完了形 (B-1 + QR + 恒久) で書き直し、placeholder と production の境界を MVP placeholder section だけに残す。
+
+非目標 (Phase 8 でもやらない):
+
+- Codex Link 独自の OAuth client 登録 (ChatGPT 第三者 OAuth は公開されていない、apple/google などの別 IdP も足さない)。
+- 複数 ChatGPT account の同時管理 (1 Mac Host = 1 ChatGPT account 前提)。
+- iPhone から ChatGPT login flow を直接走らせる (Mac Host の認証を信用する設計のため不要)。
+- App Store 公開対応 (Phase 9 以降)。
+
 ## MVP の非目標
 
 - Windows Host。
