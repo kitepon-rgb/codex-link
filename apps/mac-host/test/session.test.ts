@@ -237,7 +237,14 @@ describe("MacHostSessionRunner", () => {
     });
 
     expect(requests).toEqual([
-      { method: "thread/list", params: { limit: 25, cwd: "/repo" } },
+      {
+        method: "thread/list",
+        params: {
+          limit: 25,
+          cwd: "/repo",
+          sourceKinds: ["cli", "vscode", "exec", "appServer"],
+        },
+      },
       { method: "thread/read", params: { threadId: "thread_1", includeTurns: true } },
       {
         method: "thread/turns/list",

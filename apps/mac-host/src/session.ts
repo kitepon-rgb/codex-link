@@ -165,6 +165,7 @@ export class MacHostSessionRunner {
     const response = await this.options.codex.listThreads({
       limit: command.limit ?? 50,
       cwd: project.path,
+      sourceKinds: ["cli", "vscode", "exec", "appServer"],
     });
     for (const event of threadListResponseToEvents(response, command.projectId)) {
       this.send(event);
