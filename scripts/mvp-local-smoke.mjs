@@ -37,9 +37,13 @@ Options:
                               that triggers a file-write approval. Send codex.approval.resolve
                               accept and verify the file is written. (one LLM call)
   --reconnect                 After subscribe, drop the WS and resubscribe with afterSequence.
+  --rotate-keep-pair          After subscribe, rotate the iPhone device credential, drop the WS,
+                              reconnect with the new token + afterSequence, and verify HostAccess
+                              is preserved (Phase 8 permanent-pair invariant).
   --revoke-host-access        After the run, owner revokes iPhone HostAccess via HTTP and
                               the iPhone WS must observe HOST_ACCESS_DENIED.
-  --full                      Enable --turn, --reconnect, and --revoke-host-access together.
+  --full                      Enable --turn, --reconnect, --rotate-keep-pair, and
+                              --revoke-host-access together.
   --keep-compose              Leave Docker compose Relay running after the smoke.
   -h, --help                  Show this help.
 `);
@@ -58,6 +62,7 @@ function parseArgs(argv) {
     interruptSmoke: false,
     approvalSmoke: false,
     reconnect: false,
+    rotateKeepPair: false,
     revokeHostAccess: false,
     keepCompose: false,
     help: false,
@@ -92,12 +97,15 @@ function parseArgs(argv) {
       args.approvalSmoke = true;
     } else if (arg === "--reconnect") {
       args.reconnect = true;
+    } else if (arg === "--rotate-keep-pair") {
+      args.rotateKeepPair = true;
     } else if (arg === "--revoke-host-access") {
       args.revokeHostAccess = true;
     } else if (arg === "--full") {
       args.turn = true;
       args.listThreads = true;
       args.reconnect = true;
+      args.rotateKeepPair = true;
       args.revokeHostAccess = true;
     } else if (arg === "--keep-compose") {
       args.keepCompose = true;
@@ -233,7 +241,7 @@ async function main() {
     });
 
     const pairingCode = await waitForPairingCode(hostOutput, hostProcess, deadline);
-    const deviceSession = await createDeviceSession(args.relayUrl);
+    let deviceSession = await createDeviceSession(args.relayUrl);
     const pairing = await pairDeviceSession(args.relayUrl, deviceSession, pairingCode);
 
     const replay = {
@@ -409,6 +417,58 @@ async function main() {
       };
     }
 
+    let rotateKeepPair = null;
+    if (args.rotateKeepPair) {
+      const beforeSequence = replay.latestRelaySequence;
+      const oldDeviceToken = deviceSession.deviceToken;
+      const oldExpiresAt = deviceSession.deviceTokenExpiresAt;
+
+      clientSocket.close();
+      await waitForSocketClose(clientSocket, deadline);
+
+      const rotated = await rotateDeviceCredential(args.relayUrl, {
+        userId: deviceSession.userId,
+        deviceId: deviceSession.deviceId,
+        deviceToken: oldDeviceToken,
+      });
+      if (!rotated.deviceToken || rotated.deviceToken === oldDeviceToken) {
+        throw new Error("Rotate did not return a new device token");
+      }
+      deviceSession = {
+        ...deviceSession,
+        deviceToken: rotated.deviceToken,
+        deviceTokenExpiresAt: rotated.deviceTokenExpiresAt,
+      };
+
+      replay.subscriptionReady = false;
+      session = await openClientSession({
+        relayUrl: args.relayUrl,
+        deviceSession,
+        hostId: pairing.hostId,
+        afterSequence: beforeSequence,
+        deadline,
+      });
+      clientSocket = session.socket;
+      reader = session.reader;
+
+      let replayedEvents = 0;
+      while (!replay.subscriptionReady) {
+        const message = await reader.read(deadline);
+        if (message.type === "host.event") {
+          replayedEvents += 1;
+        }
+        applyReplayState(replay, message);
+      }
+      rotateKeepPair = {
+        beforeSequence,
+        afterSequence: replay.latestRelaySequence,
+        replayedEvents,
+        tokenChanged: true,
+        oldExpiresAt,
+        newExpiresAt: rotated.deviceTokenExpiresAt,
+      };
+    }
+
     let revoke = null;
     if (args.revokeHostAccess) {
       const ownerToken = await readKeychainToken(hostConfig.deviceTokenKeychain);
@@ -443,6 +503,7 @@ async function main() {
       interrupt,
       approval,
       reconnect,
+      rotateKeepPair,
       revoke,
       startedCompose,
       turnSmoke: args.turn,
@@ -514,7 +575,7 @@ async function waitUntil(check, deadline, label) {
 async function waitForPairingCode(output, hostProcess, deadline) {
   while (Date.now() < deadline) {
     const text = output.join("");
-    const match = text.match(/pairing code:\s*([A-F0-9]{4}-[A-F0-9]{4})/i);
+    const match = text.match(/(?:pairing\s+code|code):\s*([A-F0-9]{4}-[A-F0-9]{4})/i);
     if (match) {
       return match[1].toUpperCase();
     }
@@ -907,6 +968,26 @@ async function readKeychainToken(keychainRef) {
     throw new Error("Keychain returned empty Mac Host device token");
   }
   return token;
+}
+
+async function rotateDeviceCredential(relayUrl, params) {
+  const response = await fetch(new URL("/api/device-credential/rotate", relayUrl), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${params.deviceToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      userId: params.userId,
+      deviceId: params.deviceId,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `device-credential/rotate failed: HTTP ${response.status} ${await response.text()}`,
+    );
+  }
+  return response.json();
 }
 
 async function revokeHostAccess(relayUrl, params) {
