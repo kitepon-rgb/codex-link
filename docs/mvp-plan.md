@@ -84,6 +84,14 @@ iPhone app
 - client から `{ "id": <request id>, "result": { "decision": "accept" } }` を返すと、`serverRequest/resolved` が届き、turn が `completed` になることを確認。
 - `approval-smoke.txt` の内容が `Codex Link approval OK` になることを確認。
 
+2026-05-11 の cross-source thread 可視性検証:
+
+- `node scripts/mvp-local-smoke.mjs --turn --wait-complete` で iPhone → Relay → Mac Host → `codex app-server` 経由の turn を完了まで実行すると、`~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl` に rollout file が新規作成されることを確認 (sessions 件数 24 → 25 → 26)。Codex CLI の rollout ストアが Codex Link 経由でも正本のまま使われる。
+- 作成された rollout の `session_meta.payload.source` を実測したところ、**`"vscode"`** が記録されていた (`originator: codex_link_mac_host`, `cli_version: 0.130.0`)。`scripts/codex-app-server-thread-source-probe.mjs` で `thread/list` を 3 通り (default / 明示 `["cli","vscode","exec","appServer"]` / `["appServer"]` のみ) 呼び分けたところ、いずれも cwd 配下では `vscode` 12 件、`appServer` 0 件。`env -i` で `VSCODE_*` / `TERM_PROGRAM` を strip した状態でも source は `vscode` のままだった。Codex CLI 0.130.0 は app-server 経由でも source を `appServer` ではなく `vscode` として記録する挙動になっている。
+- 結果として、iPhone 駆動 (Mac Host 経由) の thread は VSCode Codex 拡張側の default thread 一覧と同じ source bucket に入る。逆方向 (VSCode で開始した thread を iPhone で開く) は、Mac Host の `listThreads` (`apps/mac-host/src/session.ts`) で `sourceKinds: ["cli", "vscode", "exec", "appServer"]` を明示するように更新済み。
+- 上流挙動の固定化への耐性として、`sourceKinds` を明示しておけば、将来 Codex CLI が source 推定を変えて `appServer` を返すようになっても iPhone 側 thread picker に欠落しない。
+- 残作業: 実 VSCode + Codex 拡張で iPhone 駆動 thread が thread picker に出ること、および逆方向の resume 動作を目視確認する (UI 観察なのでコード側 smoke では完結しない)。
+
 ## Phase 1: リポジトリ構成
 
 - [x] app / service / package フォルダを作る。
