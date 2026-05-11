@@ -7,6 +7,7 @@ public struct Host: Codable, Equatable, Identifiable, Sendable {
     public let name: String
     public let platform: String
     public var status: HostStatus
+    public var chatgptAccount: HostChatGptAccount?
 
     public init(
         id: String,
@@ -14,7 +15,8 @@ public struct Host: Codable, Equatable, Identifiable, Sendable {
         deviceId: String,
         name: String,
         platform: String,
-        status: HostStatus
+        status: HostStatus,
+        chatgptAccount: HostChatGptAccount? = nil
     ) {
         self.id = id
         self.ownerUserId = ownerUserId
@@ -22,6 +24,17 @@ public struct Host: Codable, Equatable, Identifiable, Sendable {
         self.name = name
         self.platform = platform
         self.status = status
+        self.chatgptAccount = chatgptAccount
+    }
+}
+
+public struct HostChatGptAccount: Codable, Equatable, Sendable {
+    public let email: String
+    public let planType: String?
+
+    public init(email: String, planType: String? = nil) {
+        self.email = email
+        self.planType = planType
     }
 }
 

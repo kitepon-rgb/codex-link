@@ -22,6 +22,8 @@ public struct CodexLinkProjection: Equatable, Sendable {
             hosts[hostId]?.status = .offline
         case .hostCapabilitiesUpdated:
             break
+        case .hostAccountUpdated(let hostId, let account):
+            hosts[hostId]?.chatgptAccount = account
         case .projectListUpdated(let hostId, let projects):
             projectsByHost[hostId] = projects
         case .threadStarted(let thread):

@@ -66,6 +66,7 @@ public enum CodexLinkEvent: Equatable, Sendable {
     case hostOnline(Host)
     case hostOffline(hostId: String)
     case hostCapabilitiesUpdated(hostId: String)
+    case hostAccountUpdated(hostId: String, account: HostChatGptAccount?)
     case projectListUpdated(hostId: String, projects: [ProjectRef])
     case threadStarted(ThreadRef)
     case turnStatusChanged(threadId: String?, turnId: String, status: TurnStatus)
@@ -104,6 +105,7 @@ extension CodexLinkEvent: Codable {
         case host
         case hostId
         case capabilities
+        case account
         case projects
         case thread
         case turnId
@@ -132,6 +134,11 @@ extension CodexLinkEvent: Codable {
             self = .hostOffline(hostId: try container.decode(String.self, forKey: .hostId))
         case "host.capabilities.updated":
             self = .hostCapabilitiesUpdated(hostId: try container.decode(String.self, forKey: .hostId))
+        case "host.account.updated":
+            self = .hostAccountUpdated(
+                hostId: try container.decode(String.self, forKey: .hostId),
+                account: try container.decodeIfPresent(HostChatGptAccount.self, forKey: .account)
+            )
         case "project.list.updated":
             self = .projectListUpdated(
                 hostId: try container.decode(String.self, forKey: .hostId),
@@ -220,6 +227,10 @@ extension CodexLinkEvent: Codable {
         case .hostCapabilitiesUpdated(let hostId):
             try container.encode("host.capabilities.updated", forKey: .type)
             try container.encode(hostId, forKey: .hostId)
+        case .hostAccountUpdated(let hostId, let account):
+            try container.encode("host.account.updated", forKey: .type)
+            try container.encode(hostId, forKey: .hostId)
+            try container.encodeIfPresent(account, forKey: .account)
         case .projectListUpdated(let hostId, let projects):
             try container.encode("project.list.updated", forKey: .type)
             try container.encode(hostId, forKey: .hostId)
