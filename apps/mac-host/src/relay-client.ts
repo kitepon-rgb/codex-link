@@ -13,6 +13,7 @@ export interface MacHostPairingCode {
   hostId: string;
   code: string;
   expiresAt: string;
+  chatgptAccount: { email: string; planType: string | null } | null;
 }
 
 export class MacHostRelayClient {
@@ -185,10 +186,21 @@ function pairingCodeMessage(message: object): MacHostPairingCode | null {
   ) {
     return null;
   }
+  let chatgptAccount: { email: string; planType: string | null } | null = null;
+  if ("chatgptAccount" in message && message.chatgptAccount && typeof message.chatgptAccount === "object") {
+    const account = message.chatgptAccount as { email?: unknown; planType?: unknown };
+    if (typeof account.email === "string") {
+      chatgptAccount = {
+        email: account.email,
+        planType: typeof account.planType === "string" ? account.planType : null,
+      };
+    }
+  }
   return {
     hostId: message.hostId,
     code: message.code,
     expiresAt: message.expiresAt,
+    chatgptAccount,
   };
 }
 

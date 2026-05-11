@@ -30,6 +30,12 @@ export interface Host {
   name: string;
   platform: "macos";
   status: "online" | "offline";
+  chatgptAccount?: HostChatGptAccount;
+}
+
+export interface HostChatGptAccount {
+  email: string;
+  planType: string | null;
 }
 
 export interface HostAccess {
@@ -110,6 +116,7 @@ export interface ApprovalDecision {
 export type CodexLinkEvent =
   | { type: "host.online"; host: Host }
   | { type: "host.offline"; hostId: HostId }
+  | { type: "host.account.updated"; hostId: HostId; account: HostChatGptAccount | null }
   | { type: "host.capabilities.updated"; hostId: HostId; capabilities: unknown }
   | { type: "project.list.updated"; hostId: HostId; projects: ProjectRef[] }
   | { type: "thread.started"; thread: ThreadRef }

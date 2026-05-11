@@ -24,6 +24,8 @@ export interface HostPairingCode {
   createdAt: string;
   expiresAt: string;
   consumedAt: string | null;
+  chatgptEmail?: string;
+  chatgptPlanType?: string | null;
 }
 
 export type RelayAuditOutcome = "success" | "denied" | "failed";

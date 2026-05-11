@@ -5,6 +5,7 @@ import type {
   DeviceId,
   Host,
   HostAccess,
+  HostChatGptAccount,
   HostId,
   User,
   UserId,
@@ -32,7 +33,7 @@ const DEFAULT_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_AUDIT_EVENT_LIMIT = 1000;
 const DEFAULT_MAX_HTTP_BODY_BYTES = 64 * 1024;
 const DEFAULT_MAX_WEBSOCKET_PAYLOAD_BYTES = 1024 * 1024;
-const DEFAULT_DEVICE_CREDENTIAL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const DEFAULT_DEVICE_CREDENTIAL_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 export type ShareableHostAccessRole = Exclude<HostAccess["role"], "owner">;
 
@@ -68,6 +69,7 @@ export interface HostPairingGrant {
   device: Device;
   host: Host;
   access: HostAccess;
+  chatgptAccount?: HostChatGptAccount;
 }
 
 export interface HostAccessGrant {
@@ -322,7 +324,7 @@ export class RelayService {
     hostId: HostId,
     options: { now?: Date; ttlMs?: number } = {},
   ): HostPairingCode {
-    this.requireHost(hostId);
+    const host = this.requireHost(hostId);
     const now = options.now ?? new Date();
     const ttlMs = options.ttlMs ?? DEFAULT_PAIRING_CODE_TTL_MS;
     const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
@@ -337,14 +339,42 @@ export class RelayService {
       expiresAt,
       consumedAt: null,
     };
+    if (host.chatgptAccount) {
+      pairingCode.chatgptEmail = host.chatgptAccount.email;
+      pairingCode.chatgptPlanType = host.chatgptAccount.planType;
+    }
     this.state.hostPairingCodes.set(normalizePairingCode(code), pairingCode);
     this.recordAudit({
       action: "host.pairing_code.created",
       outcome: "success",
       hostId,
-      detail: { expiresAt },
+      detail: {
+        expiresAt,
+        chatgptEmail: host.chatgptAccount?.email ?? null,
+      },
     });
     return pairingCode;
+  }
+
+  updateHostChatGptAccount(
+    hostId: HostId,
+    account: HostChatGptAccount | null,
+  ): Host {
+    const host = this.requireHost(hostId);
+    if (account) {
+      host.chatgptAccount = account;
+    } else {
+      delete host.chatgptAccount;
+    }
+    this.recordAudit({
+      action: "host.account.updated",
+      outcome: "success",
+      hostId,
+      detail: {
+        chatgptEmail: account?.email ?? null,
+      },
+    });
+    return host;
   }
 
   redeemHostPairingCode(input: {
@@ -379,8 +409,19 @@ export class RelayService {
       userId: user.id,
       deviceId: device.id,
       hostId: host.id,
+      detail: {
+        chatgptEmail:
+          host.chatgptAccount?.email ?? pairingCode.chatgptEmail ?? null,
+      },
     });
-    return { user, device, host, access };
+    const grant: HostPairingGrant = { user, device, host, access };
+    const chatgptAccount = host.chatgptAccount ?? (pairingCode.chatgptEmail
+      ? { email: pairingCode.chatgptEmail, planType: pairingCode.chatgptPlanType ?? null }
+      : null);
+    if (chatgptAccount) {
+      grant.chatgptAccount = chatgptAccount;
+    }
+    return grant;
   }
 
   grantHostAccess(hostId: HostId, userId: UserId, role: HostAccess["role"]): HostAccess {

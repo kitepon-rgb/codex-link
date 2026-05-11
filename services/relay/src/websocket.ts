@@ -63,6 +63,7 @@ export type RelayServerMessage =
       hostId: HostId;
       code: string;
       expiresAt: string;
+      chatgptAccount: { email: string; planType: string | null } | null;
     };
 
 interface HostSession {
@@ -290,6 +291,9 @@ export class RelayWebSocketGateway {
     this.relay.assertActiveDevice(session.deviceId);
     const message = parseClientMessage(raw);
     if (message.type === "host.event") {
+      if (message.event.type === "host.account.updated") {
+        this.relay.updateHostChatGptAccount(session.hostId, message.event.account);
+      }
       const cached = this.relay.appendHostEvent(session.hostId, message.event);
       this.broadcastHostEvent(session.hostId, cached);
       return;
@@ -300,11 +304,15 @@ export class RelayWebSocketGateway {
         key: session.hostId,
       });
       const pairingCode = this.relay.createHostPairingCode(session.hostId);
+      const chatgptAccount = pairingCode.chatgptEmail
+        ? { email: pairingCode.chatgptEmail, planType: pairingCode.chatgptPlanType ?? null }
+        : null;
       this.send(session.socket, {
         type: "host.pairingCode.created",
         hostId: session.hostId,
         code: pairingCode.code,
         expiresAt: pairingCode.expiresAt,
+        chatgptAccount,
       });
       return;
     }
@@ -460,6 +468,7 @@ async function handleHttpRequest(
       hostId: grant.host.id,
       hostName: grant.host.name,
       role: grant.access.role,
+      chatgptAccount: grant.chatgptAccount ?? null,
     });
     return;
   }

@@ -18,10 +18,12 @@
   "dependencies": {
     "@codex-link/codex-client": "workspace:*",
     "@codex-link/protocol": "workspace:*",
+    "qrcode": "^1.5.4",
     "ws": "^8.20.0"
   },
   "devDependencies": {
     "@codex-link/relay": "workspace:*",
+    "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.18.1",
     "tsx": "^4.21.0"
   }

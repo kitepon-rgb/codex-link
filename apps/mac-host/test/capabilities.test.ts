@@ -63,6 +63,16 @@ describe("readCodexAppServerCapabilities", () => {
           layers: [{ config: { secret: "do not relay" } }],
         };
       }
+      if (method === "account/read") {
+        return {
+          account: {
+            type: "chatgpt",
+            email: "smoke@example.test",
+            planType: "plus",
+          },
+          requiresOpenaiAuth: false,
+        };
+      }
       throw new Error(`Unexpected request: ${method}`);
     });
 
@@ -112,12 +122,17 @@ describe("readCodexAppServerCapabilities", () => {
         },
         projectTrustLevel: "trusted",
       },
+      account: {
+        authMode: "chatgpt",
+        chatgpt: { email: "smoke@example.test", planType: "plus" },
+      },
     });
 
     expect(requests).toEqual([
       { method: "model/list", params: { includeHidden: true } },
       { method: "experimentalFeature/list", params: {} },
       { method: "config/read", params: { includeLayers: true, cwd: "/repo" } },
+      { method: "account/read", params: { refreshToken: false } },
     ]);
   });
 });

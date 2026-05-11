@@ -465,7 +465,10 @@ describe("RelayService", () => {
     const createdAudit = relay
       .listAuditEvents()
       .find((event) => event.action === "host.pairing_code.created");
-    expect(createdAudit?.detail).toEqual({ expiresAt: pairingCode.expiresAt });
+    expect(createdAudit?.detail).toEqual({
+      expiresAt: pairingCode.expiresAt,
+      chatgptEmail: null,
+    });
     expect(JSON.stringify(createdAudit)).not.toContain(pairingCode.code);
     expect(() =>
       relay.redeemHostPairingCode({

@@ -48,6 +48,15 @@ export interface CodexAppServerCapabilities {
     features: Record<string, boolean>;
     projectTrustLevel: string | null;
   };
+  account: CodexAppServerAccountSummary;
+}
+
+export interface CodexAppServerAccountSummary {
+  authMode: "chatgpt" | "apiKey" | "amazonBedrock" | null;
+  chatgpt: {
+    email: string;
+    planType: string | null;
+  } | null;
 }
 
 export async function readMacHostCapabilities(
@@ -74,16 +83,46 @@ export async function readCodexAppServerCapabilities(
   config: MacHostConfig,
 ): Promise<CodexAppServerCapabilities> {
   const cwd = config.projects[0]?.path ?? null;
-  const [models, experimentalFeatures, codexConfig] = await Promise.all([
+  const [models, experimentalFeatures, codexConfig, account] = await Promise.all([
     codex.listModels({ includeHidden: true }),
     codex.listExperimentalFeatures({}),
     codex.readConfig({ includeLayers: true, cwd }),
+    readCodexAccount(codex),
   ]);
   return {
     models: summarizeModels(models),
     experimentalFeatures: summarizeExperimentalFeatures(experimentalFeatures),
     config: summarizeConfig(codexConfig, cwd),
+    account,
   };
+}
+
+export async function readCodexAccount(
+  codex: CodexAppServerClient,
+): Promise<CodexAppServerAccountSummary> {
+  let response: unknown = null;
+  try {
+    response = await codex.request("account/read", { refreshToken: false });
+  } catch {
+    return { authMode: null, chatgpt: null };
+  }
+  const account = objectValue(objectValue(response)?.account);
+  const type = stringValue(account?.type);
+  if (type === "chatgpt") {
+    const email = stringValue(account?.email);
+    if (!email) {
+      return { authMode: "chatgpt", chatgpt: null };
+    }
+    const planType = stringValue(account?.planType) ?? stringValue(account?.plan_type);
+    return {
+      authMode: "chatgpt",
+      chatgpt: { email, planType },
+    };
+  }
+  if (type === "apiKey" || type === "amazonBedrock") {
+    return { authMode: type, chatgpt: null };
+  }
+  return { authMode: null, chatgpt: null };
 }
 
 function summarizeModels(value: unknown): CodexAppServerCapabilities["models"] {
