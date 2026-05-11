@@ -23,6 +23,9 @@ export interface StartCodexTurnCommand {
   projectId: ProjectId;
   prompt: string;
   threadId?: ThreadId;
+  cwd?: string;
+  approvalPolicy?: unknown;
+  sandbox?: unknown;
 }
 
 export interface SteerCodexTurnCommand {
@@ -81,6 +84,8 @@ export interface MacHostSessionRunnerOptions {
 export class MacHostSessionRunner {
   private readonly pendingApprovalRequestIds = new Set<string>();
   private readonly pendingApprovalDecisions = new Map<string, ApprovalDecisionKind>();
+  private readonly activeTurnByThread = new Map<string, string>();
+  private readonly originalRequestIds = new Map<string, string | number>();
 
   constructor(private readonly options: MacHostSessionRunnerOptions) {}
 
@@ -118,13 +123,22 @@ export class MacHostSessionRunner {
 
   async startTurn(command: StartCodexTurnCommand): Promise<void> {
     const project = this.projectFor(command.projectId);
-    const threadId = command.threadId ?? (await this.startThread(project));
-    const turnResponse = await this.options.codex.startTurn({
+    const threadOverrides: { cwd?: string; approvalPolicy?: unknown; sandbox?: unknown } = {};
+    if (command.cwd !== undefined) threadOverrides.cwd = command.cwd;
+    if (command.approvalPolicy !== undefined) threadOverrides.approvalPolicy = command.approvalPolicy;
+    if (command.sandbox !== undefined) threadOverrides.sandbox = command.sandbox;
+    const threadId = command.threadId ?? (await this.startThread(project, threadOverrides));
+    const turnParams: Record<string, unknown> = {
       threadId,
       input: [{ type: "text", text: command.prompt, text_elements: [] }],
-      cwd: project.path,
-    });
-    this.sendMaybe(turnStartResponseToEvent(turnResponse, threadId));
+      cwd: command.cwd ?? project.path,
+    };
+    const turnResponse = await this.options.codex.startTurn(turnParams);
+    const turnEvent = turnStartResponseToEvent(turnResponse, threadId);
+    if (turnEvent && turnEvent.type === "turn.status.changed") {
+      this.activeTurnByThread.set(turnEvent.threadId, turnEvent.turnId);
+    }
+    this.sendMaybe(turnEvent);
   }
 
   async steerTurn(command: SteerCodexTurnCommand): Promise<void> {
@@ -143,10 +157,12 @@ export class MacHostSessionRunner {
   }
 
   resolveApproval(command: ResolveCodexApprovalCommand): void {
-    this.options.codex.respondToServerRequest(command.requestId, {
+    const originalId = this.originalRequestIds.get(command.requestId) ?? command.requestId;
+    this.options.codex.respondToServerRequest(originalId, {
       decision: decisionToCodex(command.decision),
     });
     this.pendingApprovalDecisions.set(command.requestId, command.decision);
+    this.originalRequestIds.delete(command.requestId);
   }
 
   async restoreThread(command: RestoreCodexThreadCommand): Promise<void> {
@@ -190,6 +206,7 @@ export class MacHostSessionRunner {
   }
 
   handleCodexNotification(message: Parameters<typeof codexNotificationToEvents>[0]): void {
+    this.captureActiveTurnFromNotification(message);
     if (message.method === "serverRequest/resolved") {
       const requestId = requestIdFromServerRequestResolved(message.params);
       const decision = requestId ? this.pendingApprovalDecisions.get(requestId) : undefined;
@@ -223,21 +240,78 @@ export class MacHostSessionRunner {
   }
 
   handleCodexServerRequest(message: Parameters<typeof codexServerRequestToEvent>[0]): void {
-    const event = codexServerRequestToEvent(message);
+    const event = codexServerRequestToEvent(message, {
+      activeTurnIdForThread: (threadId) => this.activeTurnByThread.get(threadId),
+    });
     if (event?.type === "approval.requested") {
       this.pendingApprovalRequestIds.add(event.request.id);
+      if (typeof message.id === "number" || typeof message.id === "string") {
+        this.originalRequestIds.set(event.request.id, message.id);
+      }
+    }
+    if (!event && message.method) {
+      this.send({
+        type: "diagnostic.reported",
+        diagnostic: {
+          scope: "host",
+          severity: "info",
+          message: `Mac Host received unhandled server request: ${message.method}`,
+        },
+      });
     }
     this.sendMaybe(event);
   }
 
-  private async startThread(project: MacHostProjectConfig): Promise<ThreadId> {
-    const threadResponse = await this.options.codex.startThread({
-      cwd: project.path,
+  private captureActiveTurnFromNotification(
+    message: Parameters<typeof codexNotificationToEvents>[0],
+  ): void {
+    if (message.method !== "turn/started" && message.method !== "turn/completed") {
+      return;
+    }
+    const params = message.params;
+    if (!params || typeof params !== "object" || Array.isArray(params)) {
+      return;
+    }
+    const paramsObject = params as { threadId?: unknown; turn?: unknown };
+    const turn = paramsObject.turn && typeof paramsObject.turn === "object" && !Array.isArray(paramsObject.turn)
+      ? paramsObject.turn as { id?: unknown; threadId?: unknown }
+      : null;
+    const threadId = typeof paramsObject.threadId === "string"
+      ? paramsObject.threadId
+      : (turn && typeof turn.threadId === "string" ? turn.threadId : null);
+    const turnId = turn && typeof turn.id === "string" ? turn.id : null;
+    if (!threadId || !turnId) {
+      return;
+    }
+    if (message.method === "turn/started") {
+      this.activeTurnByThread.set(threadId, turnId);
+    } else if (this.activeTurnByThread.get(threadId) === turnId) {
+      this.activeTurnByThread.delete(threadId);
+    }
+  }
+
+  private async startThread(
+    project: MacHostProjectConfig,
+    overrides: {
+      cwd?: string;
+      approvalPolicy?: unknown;
+      sandbox?: unknown;
+    } = {},
+  ): Promise<ThreadId> {
+    const threadParams: Record<string, unknown> = {
+      cwd: overrides.cwd ?? project.path,
       serviceName: "codex-link-mac-host",
       approvalsReviewer: "user",
       experimentalRawEvents: true,
       persistExtendedHistory: false,
-    });
+    };
+    if (overrides.approvalPolicy !== undefined) {
+      threadParams.approvalPolicy = overrides.approvalPolicy;
+    }
+    if (overrides.sandbox !== undefined) {
+      threadParams.sandbox = overrides.sandbox;
+    }
+    const threadResponse = await this.options.codex.startThread(threadParams);
     this.sendMaybe(threadStartResponseToEvent(threadResponse, project.id));
     const threadId = threadIdFromResponse(threadResponse);
     if (!threadId) {
@@ -274,7 +348,8 @@ function isStartCodexTurnCommand(value: unknown): value is StartCodexTurnCommand
     command.type === "codex.turn.start" &&
     typeof command.projectId === "string" &&
     typeof command.prompt === "string" &&
-    (command.threadId === undefined || typeof command.threadId === "string")
+    (command.threadId === undefined || typeof command.threadId === "string") &&
+    (command.cwd === undefined || typeof command.cwd === "string")
   );
 }
 
@@ -348,7 +423,13 @@ function requestIdFromServerRequestResolved(params: unknown): string | null {
     return null;
   }
   const requestId = (params as { requestId?: unknown }).requestId;
-  return typeof requestId === "string" ? requestId : null;
+  if (typeof requestId === "string") {
+    return requestId;
+  }
+  if (typeof requestId === "number") {
+    return String(requestId);
+  }
+  return null;
 }
 
 function isListCodexThreadsCommand(value: unknown): value is ListCodexThreadsCommand {

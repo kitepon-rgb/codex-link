@@ -73,6 +73,51 @@ describe("MacHostSessionRunner", () => {
     ]);
   });
 
+  it("forwards approvalPolicy / sandbox / cwd overrides into thread start when creating a new thread", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const codex = fakeCodexClient(async (method, params) => {
+      requests.push({ method, params });
+      if (method === "thread/start") {
+        return { thread: { id: "thread_2", name: null, preview: "P" } };
+      }
+      if (method === "turn/start") {
+        return { turn: { id: "turn_2", status: "inProgress" } };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const runner = new MacHostSessionRunner({
+      config,
+      codex,
+      relay: { sendHostEvent: () => undefined },
+    });
+
+    await runner.handleCommand({
+      type: "codex.turn.start",
+      projectId: "project_1",
+      prompt: "Write file",
+      cwd: "/tmp/codex-link-approval",
+      approvalPolicy: "on-request",
+      sandbox: "read-only",
+    });
+
+    const threadStart = requests.find((entry) => entry.method === "thread/start");
+    expect(threadStart?.params).toEqual({
+      cwd: "/tmp/codex-link-approval",
+      serviceName: "codex-link-mac-host",
+      approvalsReviewer: "user",
+      experimentalRawEvents: true,
+      persistExtendedHistory: false,
+      approvalPolicy: "on-request",
+      sandbox: "read-only",
+    });
+    const turnStart = requests.find((entry) => entry.method === "turn/start");
+    expect(turnStart?.params).toEqual({
+      threadId: "thread_2",
+      input: [{ type: "text", text: "Write file", text_elements: [] }],
+      cwd: "/tmp/codex-link-approval",
+    });
+  });
+
   it("steers and interrupts active turns through codex app-server", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const codex = fakeCodexClient(async (method, params) => {

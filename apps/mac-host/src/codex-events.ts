@@ -220,8 +220,13 @@ export function threadTurnsListResponseToEvents(
   });
 }
 
+export interface CodexServerRequestContext {
+  activeTurnIdForThread?(threadId: string): string | undefined;
+}
+
 export function codexServerRequestToEvent(
   message: JsonRpcServerRequest,
+  context: CodexServerRequestContext = {},
 ): CodexLinkEvent | null {
   const params = objectValue(message.params);
   if (!params) {
@@ -280,6 +285,39 @@ export function codexServerRequestToEvent(
       title: "User input requested",
       detail: JSON.stringify(params.questions ?? []),
       availableDecisions: ["accept", "cancel"],
+    });
+  }
+
+  if (message.method === "execCommandApproval") {
+    const threadId = stringValue(params.conversationId);
+    const command = Array.isArray(params.command) ? params.command.map(String).join(" ") : "";
+    const reason = stringValue(params.reason);
+    return approvalEvent({
+      id: String(message.id) as RequestId,
+      kind: "command_execution",
+      threadId,
+      turnId: threadId ? context.activeTurnIdForThread?.(threadId) : undefined,
+      itemId: stringValue(params.callId),
+      title: "Command approval",
+      detail: reason ? `${command}\n${reason}` : command,
+      availableDecisions: ["accept", "accept_for_session", "decline"],
+    });
+  }
+
+  if (message.method === "applyPatchApproval") {
+    const threadId = stringValue(params.conversationId);
+    const fileChanges = objectValue(params.fileChanges) ?? {};
+    const filePaths = Object.keys(fileChanges).join(", ");
+    const reason = stringValue(params.reason);
+    return approvalEvent({
+      id: String(message.id) as RequestId,
+      kind: "file_change",
+      threadId,
+      turnId: threadId ? context.activeTurnIdForThread?.(threadId) : undefined,
+      itemId: stringValue(params.callId),
+      title: "File change approval",
+      detail: reason ? `${filePaths}\n${reason}` : filePaths,
+      availableDecisions: ["accept", "accept_for_session", "decline"],
     });
   }
 
