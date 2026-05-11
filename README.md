@@ -95,7 +95,7 @@ MVP の Relay / Host / pairing / client subscribe をまとめて確認する場
 node scripts/mvp-local-smoke.mjs
 ```
 
-この smoke は既定では Codex turn を開始しません。Codex app-server まで含めて実 turn の開始を確認する場合は `--turn` を付けます。
+この smoke は既定では Codex turn を開始しません。Codex app-server まで含めて実 turn の開始を確認する場合は `--turn` を付けます。`--reconnect` で iPhone WebSocket を切断 → `afterSequence` 付きで購読しなおし、`--revoke-host-access` で Host owner が iPhone の HostAccess を HTTP `host-access/revoke` 経由で剥がし、対象 WebSocket が `HOST_ACCESS_DENIED` を観測することを確認します。`--full` で `--turn` `--reconnect` `--revoke-host-access` をまとめて有効化します。
 
 ## 基本決定
 

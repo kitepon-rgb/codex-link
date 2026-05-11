@@ -19,13 +19,19 @@ function usage() {
   node scripts/mvp-local-smoke.mjs [options]
 
 Options:
-  --relay-url <url>          Relay URL. Defaults to http://127.0.0.1:3000.
-  --bootstrap-token <token>  Host bootstrap token. Defaults to local dev token.
-  --project-path <path>      Project path exposed by Host. Defaults to repo root.
-  --timeout-ms <number>      Overall timeout. Defaults to 120000.
-  --turn                     Also start a real Codex turn and wait for running status.
-  --keep-compose             Leave Docker compose Relay running after the smoke.
-  -h, --help                 Show this help.
+  --relay-url <url>           Relay URL. Defaults to http://127.0.0.1:3000.
+  --bootstrap-token <token>   Host bootstrap token. Defaults to local dev token.
+  --project-path <path>       Project path exposed by Host. Defaults to repo root.
+  --timeout-ms <number>       Overall timeout. Defaults to 120000.
+  --turn                      Also start a real Codex turn and wait for running status.
+  --wait-complete             Combined with --turn, also wait for completed/failed/canceled.
+                              Verifies the rollout persists to ~/.codex/sessions (one LLM call).
+  --reconnect                 After subscribe, drop the WS and resubscribe with afterSequence.
+  --revoke-host-access        After the run, owner revokes iPhone HostAccess via HTTP and
+                              the iPhone WS must observe HOST_ACCESS_DENIED.
+  --full                      Enable --turn, --reconnect, and --revoke-host-access together.
+  --keep-compose              Leave Docker compose Relay running after the smoke.
+  -h, --help                  Show this help.
 `);
 }
 
@@ -36,6 +42,9 @@ function parseArgs(argv) {
     projectPath: root,
     timeoutMs: 120000,
     turn: false,
+    waitComplete: false,
+    reconnect: false,
+    revokeHostAccess: false,
     keepCompose: false,
     help: false,
   };
@@ -57,6 +66,16 @@ function parseArgs(argv) {
       }
     } else if (arg === "--turn") {
       args.turn = true;
+    } else if (arg === "--wait-complete") {
+      args.waitComplete = true;
+    } else if (arg === "--reconnect") {
+      args.reconnect = true;
+    } else if (arg === "--revoke-host-access") {
+      args.revokeHostAccess = true;
+    } else if (arg === "--full") {
+      args.turn = true;
+      args.reconnect = true;
+      args.revokeHostAccess = true;
     } else if (arg === "--keep-compose") {
       args.keepCompose = true;
     } else {
@@ -194,20 +213,6 @@ async function main() {
     const deviceSession = await createDeviceSession(args.relayUrl);
     const pairing = await pairDeviceSession(args.relayUrl, deviceSession, pairingCode);
 
-    const wsUrl = clientWebSocketUrl(args.relayUrl, deviceSession);
-    clientSocket = new WebSocket(wsUrl, {
-      headers: {
-        authorization: `Bearer ${deviceSession.deviceToken}`,
-      },
-    });
-    const reader = new WebSocketReader(clientSocket);
-    await reader.open(deadline);
-    await reader.readUntil((message) => message.type === "relay.ready", deadline, "relay.ready");
-    clientSocket.send(JSON.stringify({
-      type: "client.subscribeHost",
-      hostId: pairing.hostId,
-    }));
-
     const replay = {
       hostOnline: false,
       projects: false,
@@ -215,7 +220,19 @@ async function main() {
       subscriptionReady: false,
       threadStarted: false,
       turnRunning: false,
+      turnTerminal: null,
+      latestRelaySequence: 0,
     };
+
+    let session = await openClientSession({
+      relayUrl: args.relayUrl,
+      deviceSession,
+      hostId: pairing.hostId,
+      afterSequence: 0,
+      deadline,
+    });
+    clientSocket = session.socket;
+    let reader = session.reader;
 
     while (!replay.subscriptionReady || !replay.hostOnline || !replay.projects || !replay.capabilities) {
       const message = await reader.read(deadline);
@@ -236,6 +253,65 @@ async function main() {
         const message = await reader.read(deadline);
         applyReplayState(replay, message);
       }
+      if (args.waitComplete) {
+        while (!replay.turnTerminal) {
+          const message = await reader.read(deadline);
+          applyReplayState(replay, message);
+        }
+      }
+    }
+
+    let reconnect = null;
+    if (args.reconnect) {
+      const beforeSequence = replay.latestRelaySequence;
+      clientSocket.close();
+      await waitForSocketClose(clientSocket, deadline);
+
+      replay.subscriptionReady = false;
+      session = await openClientSession({
+        relayUrl: args.relayUrl,
+        deviceSession,
+        hostId: pairing.hostId,
+        afterSequence: beforeSequence,
+        deadline,
+      });
+      clientSocket = session.socket;
+      reader = session.reader;
+
+      let replayedEvents = 0;
+      while (!replay.subscriptionReady) {
+        const message = await reader.read(deadline);
+        if (message.type === "host.event") {
+          replayedEvents += 1;
+        }
+        applyReplayState(replay, message);
+      }
+      reconnect = {
+        beforeSequence,
+        afterSequence: replay.latestRelaySequence,
+        replayedEvents,
+      };
+    }
+
+    let revoke = null;
+    if (args.revokeHostAccess) {
+      const ownerToken = await readKeychainToken(hostConfig.deviceTokenKeychain);
+      const revocation = await revokeHostAccess(args.relayUrl, {
+        ownerUserId: hostConfig.userId,
+        ownerDeviceId: hostConfig.deviceId,
+        hostId: pairing.hostId,
+        targetUserId: deviceSession.userId,
+        ownerToken,
+      });
+      const denial = await reader.readUntil(
+        (message) => message.type === "relay.error" && message.code === "HOST_ACCESS_DENIED",
+        deadline,
+        "HOST_ACCESS_DENIED after revoke",
+      );
+      revoke = {
+        revokedRole: revocation.revokedRole,
+        observedCode: denial.code,
+      };
     }
 
     await cleanup();
@@ -246,6 +322,8 @@ async function main() {
       deviceId: deviceSession.deviceId,
       pairingRole: pairing.role,
       replay,
+      reconnect,
+      revoke,
       startedCompose,
       turnSmoke: args.turn,
     }, null, 2));
@@ -383,10 +461,19 @@ function applyReplayState(replay, message) {
   }
   if (message.type === "host.subscription.ready") {
     replay.subscriptionReady = true;
+    if (typeof message.latestSequence === "number") {
+      replay.latestRelaySequence = message.latestSequence;
+    }
     return;
   }
   if (message.type !== "host.event") {
     return;
+  }
+  if (typeof message.event?.sequence === "number") {
+    replay.latestRelaySequence = Math.max(
+      replay.latestRelaySequence ?? 0,
+      message.event.sequence,
+    );
   }
   const eventType = message.event?.event?.type;
   if (eventType === "host.online") {
@@ -397,12 +484,95 @@ function applyReplayState(replay, message) {
     replay.capabilities = true;
   } else if (eventType === "thread.started") {
     replay.threadStarted = true;
-  } else if (
-    eventType === "turn.status.changed" &&
-    message.event?.event?.status === "running"
-  ) {
-    replay.turnRunning = true;
+  } else if (eventType === "turn.status.changed") {
+    const status = message.event?.event?.status;
+    if (status === "running") {
+      replay.turnRunning = true;
+    } else if (status === "completed" || status === "failed" || status === "canceled") {
+      replay.turnTerminal = status;
+    }
   }
+}
+
+async function openClientSession({ relayUrl, deviceSession, hostId, afterSequence, deadline }) {
+  const wsUrl = clientWebSocketUrl(relayUrl, deviceSession);
+  const socket = new WebSocket(wsUrl, {
+    headers: {
+      authorization: `Bearer ${deviceSession.deviceToken}`,
+    },
+  });
+  const reader = new WebSocketReader(socket);
+  await reader.open(deadline);
+  await reader.readUntil((message) => message.type === "relay.ready", deadline, "relay.ready");
+  const subscribe = {
+    type: "client.subscribeHost",
+    hostId,
+  };
+  if (afterSequence > 0) {
+    subscribe.afterSequence = afterSequence;
+  }
+  socket.send(JSON.stringify(subscribe));
+  return { socket, reader };
+}
+
+function waitForSocketClose(socket, deadline) {
+  if (socket.readyState === WebSocket.CLOSED) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const timeoutMs = Math.max(0, deadline - Date.now());
+    const timer = setTimeout(() => reject(new Error("WebSocket close timed out")), timeoutMs);
+    socket.once("close", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+async function readKeychainToken(keychainRef) {
+  if (!keychainRef || typeof keychainRef !== "object") {
+    throw new Error("Mac Host config does not include a Keychain reference for the device token");
+  }
+  const { service, account } = keychainRef;
+  if (!service || !account) {
+    throw new Error("Mac Host Keychain reference is missing service or account");
+  }
+  if (process.platform !== "darwin") {
+    throw new Error("Reading the Mac Host device token requires macOS Keychain");
+  }
+  const { stdout } = await execFile("/usr/bin/security", [
+    "find-generic-password",
+    "-s",
+    service,
+    "-a",
+    account,
+    "-w",
+  ]);
+  const token = stdout.trim();
+  if (!token) {
+    throw new Error("Keychain returned empty Mac Host device token");
+  }
+  return token;
+}
+
+async function revokeHostAccess(relayUrl, params) {
+  const response = await fetch(new URL("/api/host-access/revoke", relayUrl), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${params.ownerToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      ownerUserId: params.ownerUserId,
+      ownerDeviceId: params.ownerDeviceId,
+      hostId: params.hostId,
+      targetUserId: params.targetUserId,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`host-access/revoke failed: HTTP ${response.status} ${await response.text()}`);
+  }
+  return response.json();
 }
 
 class WebSocketReader {
