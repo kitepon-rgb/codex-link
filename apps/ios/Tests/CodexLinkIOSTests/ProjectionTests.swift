@@ -382,6 +382,29 @@ final class ProjectionTests: XCTestCase {
         XCTAssertTrue(liveActivity.approvalRequired)
     }
 
+    func testAssistantDeltaIsReplacedByTranscriptItemRecorded() {
+        var projection = CodexLinkProjection()
+        projection.apply(.threadStarted(ThreadRef(
+            id: "thread_1",
+            projectId: "project_1",
+            title: "Thread"
+        )))
+        projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_1", status: .running))
+        projection.apply(.assistantDelta(threadId: "thread_1", turnId: "turn_1", text: "O"))
+        projection.apply(.assistantDelta(threadId: "thread_1", turnId: "turn_1", text: "K"))
+        projection.apply(.transcriptItemRecorded(
+            threadId: "thread_1",
+            turnId: "turn_1",
+            itemId: "item_assistant",
+            role: .assistant,
+            text: "OK"
+        ))
+
+        XCTAssertEqual(projection.transcript.count, 1)
+        XCTAssertEqual(projection.transcript.first?.id, "item_assistant")
+        XCTAssertEqual(projection.transcript.first?.text, "OK")
+    }
+
     func testBuildsLiveActivitySnapshotWithDeepLink() throws {
         var projection = projectionWithActiveTurn(status: .running)
 

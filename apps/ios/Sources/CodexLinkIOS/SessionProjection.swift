@@ -104,6 +104,13 @@ public struct CodexLinkProjection: Equatable, Sendable {
             transcript[index] = item
             return
         }
+        if item.role == .assistant,
+           let deltaIndex = transcript.firstIndex(where: {
+               $0.id == "assistant-delta-\(item.turnId)"
+           }) {
+            transcript[deltaIndex] = item
+            return
+        }
         transcript.append(item)
     }
 
