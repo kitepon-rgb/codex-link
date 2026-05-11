@@ -2,7 +2,7 @@
 
 import { spawn, execFile as execFileCallback } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir, hostname } from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -29,6 +29,13 @@ Options:
   --list-threads              After subscribe, send codex.thread.list and report how many
                               thread.started events come back (verifies cross-source visibility
                               of CLI/VSCode-created threads from iPhone perspective).
+  --steer-smoke               Start a long-running turn, send codex.turn.steer once running,
+                              and wait for completed (one LLM round-trip + steer).
+  --interrupt-smoke           Start a long-running turn, send codex.turn.interrupt once
+                              running, and wait for a terminal status.
+  --approval-smoke            Start a turn under on-request / readOnly sandbox in a tmp cwd
+                              that triggers a file-write approval. Send codex.approval.resolve
+                              accept and verify the file is written. (one LLM call)
   --reconnect                 After subscribe, drop the WS and resubscribe with afterSequence.
   --revoke-host-access        After the run, owner revokes iPhone HostAccess via HTTP and
                               the iPhone WS must observe HOST_ACCESS_DENIED.
@@ -47,6 +54,9 @@ function parseArgs(argv) {
     turn: false,
     waitComplete: false,
     listThreads: false,
+    steerSmoke: false,
+    interruptSmoke: false,
+    approvalSmoke: false,
     reconnect: false,
     revokeHostAccess: false,
     keepCompose: false,
@@ -74,6 +84,12 @@ function parseArgs(argv) {
       args.waitComplete = true;
     } else if (arg === "--list-threads") {
       args.listThreads = true;
+    } else if (arg === "--steer-smoke") {
+      args.steerSmoke = true;
+    } else if (arg === "--interrupt-smoke") {
+      args.interruptSmoke = true;
+    } else if (arg === "--approval-smoke") {
+      args.approvalSmoke = true;
     } else if (arg === "--reconnect") {
       args.reconnect = true;
     } else if (arg === "--revoke-host-access") {
@@ -309,6 +325,58 @@ async function main() {
       }
     }
 
+    let steer = null;
+    if (args.steerSmoke) {
+      steer = await runControlSmoke({
+        clientSocket,
+        reader,
+        replay,
+        hostId: pairing.hostId,
+        projectId: hostConfig.projects[0].id,
+        deadline,
+        kind: "steer",
+        startPrompt: [
+          "Count slowly from 1 to 200 in plain English (one, two, three, ...).",
+          "Write each number on its own line.",
+          "Do not summarize; just keep counting until told to stop.",
+        ].join(" "),
+        followupPrompt: "Stop counting and reply with exactly: STEERED",
+        followupTrigger: "assistant.delta",
+      });
+    }
+
+    let interrupt = null;
+    if (args.interruptSmoke) {
+      interrupt = await runControlSmoke({
+        clientSocket,
+        reader,
+        replay,
+        hostId: pairing.hostId,
+        projectId: hostConfig.projects[0].id,
+        deadline,
+        kind: "interrupt",
+        startPrompt: [
+          "Count slowly from 1 to 200 in plain English (one, two, three, ...).",
+          "Write each number on its own line.",
+          "Do not summarize; just keep counting until interrupted.",
+        ].join(" "),
+        followupTrigger: "assistant.delta",
+      });
+    }
+
+    let approval = null;
+    if (args.approvalSmoke) {
+      approval = await runApprovalSmoke({
+        clientSocket,
+        reader,
+        replay,
+        hostId: pairing.hostId,
+        projectId: hostConfig.projects[0].id,
+        deadline,
+        tempDir,
+      });
+    }
+
     let reconnect = null;
     if (args.reconnect) {
       const beforeSequence = replay.latestRelaySequence;
@@ -371,6 +439,9 @@ async function main() {
       pairingRole: pairing.role,
       replay,
       listThreads,
+      steer,
+      interrupt,
+      approval,
       reconnect,
       revoke,
       startedCompose,
@@ -541,6 +612,240 @@ function applyReplayState(replay, message) {
       replay.turnTerminal = status;
     }
   }
+}
+
+async function runApprovalSmoke(options) {
+  const { clientSocket, reader, replay, hostId, projectId, deadline, tempDir } = options;
+
+  const approvalDir = path.join(tempDir, "approval-workdir");
+  await mkdir(approvalDir, { recursive: true });
+  const approvalFile = path.join(approvalDir, "approval-smoke.txt");
+  const expectedContent = "Codex Link approval OK";
+
+  clientSocket.send(JSON.stringify({
+    type: "client.toHost",
+    hostId,
+    payload: {
+      type: "codex.turn.start",
+      projectId,
+      cwd: approvalDir,
+      approvalPolicy: "on-request",
+      sandbox: "read-only",
+      prompt: [
+        "Use a shell command to create approval-smoke.txt in the current directory.",
+        `Run: printf '${expectedContent}\\n' > approval-smoke.txt`,
+        "Do not use apply_patch.",
+        "After the shell command runs, reply with exactly: approval smoke completed",
+      ].join(" "),
+    },
+  }));
+
+  let activeThreadId = null;
+  let activeTurnId = null;
+  let approvalRequest = null;
+  const observedEventTypes = [];
+  const observedDiagnostics = [];
+  try {
+    while (!approvalRequest) {
+      const message = await reader.read(deadline);
+      if (typeof message.event?.sequence === "number") {
+        replay.latestRelaySequence = Math.max(replay.latestRelaySequence ?? 0, message.event.sequence);
+      }
+      if (message.type === "relay.error") {
+        throw new Error(`Relay error during approval smoke turn start: ${message.code} ${message.message}`);
+      }
+      if (message.event?.event?.type === "error.reported") {
+        throw new Error(`Host error during approval smoke turn start: ${message.event.event.message}`);
+      }
+      const event = message.event?.event;
+      if (event?.type) {
+        observedEventTypes.push(event.type);
+      }
+      if (event?.type === "diagnostic.reported") {
+        observedDiagnostics.push(event.diagnostic?.message);
+      }
+      if (event?.type === "turn.status.changed" && event.status === "running") {
+        activeThreadId = event.threadId;
+        activeTurnId = event.turnId;
+      }
+      if (event?.type === "approval.requested") {
+        approvalRequest = event.request;
+      }
+    }
+  } catch (error) {
+    const summary = `\nApproval smoke event log: types=${JSON.stringify(observedEventTypes)} diagnostics=${JSON.stringify(observedDiagnostics)}`;
+    throw error instanceof Error ? new Error(`${error.message}${summary}`) : new Error(`${String(error)}${summary}`);
+  }
+
+  clientSocket.send(JSON.stringify({
+    type: "client.toHost",
+    hostId,
+    payload: {
+      type: "codex.approval.resolve",
+      requestId: approvalRequest.id,
+      decision: "accept",
+    },
+  }));
+
+  let resolved = false;
+  let terminal = null;
+  try {
+    while (!terminal) {
+      const message = await reader.read(deadline);
+      if (typeof message.event?.sequence === "number") {
+        replay.latestRelaySequence = Math.max(replay.latestRelaySequence ?? 0, message.event.sequence);
+      }
+      if (message.type === "relay.error") {
+        throw new Error(`Relay error during approval smoke followup: ${message.code} ${message.message}`);
+      }
+      if (message.event?.event?.type === "error.reported") {
+        throw new Error(`Host error during approval smoke followup: ${message.event.event.message}`);
+      }
+      const event = message.event?.event;
+      if (event?.type) {
+        observedEventTypes.push(event.type);
+      }
+      if (event?.type === "diagnostic.reported") {
+        observedDiagnostics.push(event.diagnostic?.message);
+      }
+      if (event?.type === "approval.resolved" && event.requestId === approvalRequest.id) {
+        resolved = true;
+      }
+      if (
+        event?.type === "turn.status.changed" &&
+        event.threadId === activeThreadId &&
+        event.turnId === activeTurnId &&
+        (event.status === "completed" || event.status === "failed" || event.status === "canceled")
+      ) {
+        terminal = event.status;
+      }
+    }
+  } catch (error) {
+    const summary = `\nApproval smoke event log: types=${JSON.stringify(observedEventTypes)} diagnostics=${JSON.stringify(observedDiagnostics)} resolved=${resolved} approvalRequestId=${approvalRequest.id}`;
+    throw error instanceof Error ? new Error(`${error.message}${summary}`) : new Error(`${String(error)}${summary}`);
+  }
+
+  let fileContent = null;
+  try {
+    fileContent = (await readFile(approvalFile, "utf8")).trim();
+  } catch (error) {
+    throw new Error(`Approval smoke file not written at ${approvalFile}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (fileContent !== expectedContent) {
+    throw new Error(`Approval smoke file content mismatch. expected="${expectedContent}" actual="${fileContent}"`);
+  }
+
+  return {
+    threadId: activeThreadId,
+    turnId: activeTurnId,
+    requestId: approvalRequest.id,
+    kind: approvalRequest.kind,
+    resolved,
+    terminal,
+    fileContent,
+  };
+}
+
+async function runControlSmoke(options) {
+  const {
+    clientSocket,
+    reader,
+    replay,
+    hostId,
+    projectId,
+    deadline,
+    kind,
+    startPrompt,
+    followupPrompt,
+    followupTrigger = "turn.running",
+  } = options;
+
+  clientSocket.send(JSON.stringify({
+    type: "client.toHost",
+    hostId,
+    payload: {
+      type: "codex.turn.start",
+      projectId,
+      prompt: startPrompt,
+    },
+  }));
+
+  let activeThreadId = null;
+  let activeTurnId = null;
+  let triggerSeen = false;
+  while (!activeThreadId || !activeTurnId || !triggerSeen) {
+    const message = await reader.read(deadline);
+    if (typeof message.event?.sequence === "number") {
+      replay.latestRelaySequence = Math.max(replay.latestRelaySequence ?? 0, message.event.sequence);
+    }
+    if (message.type === "relay.error") {
+      throw new Error(`Relay error during ${kind} smoke turn start: ${message.code} ${message.message}`);
+    }
+    if (message.event?.event?.type === "error.reported") {
+      throw new Error(`Host error during ${kind} smoke turn start: ${message.event.event.message}`);
+    }
+    const event = message.event?.event;
+    if (event?.type === "turn.status.changed" && event.status === "running") {
+      activeThreadId = event.threadId;
+      activeTurnId = event.turnId;
+      if (followupTrigger === "turn.running") {
+        triggerSeen = true;
+      }
+    }
+    if (
+      followupTrigger === "assistant.delta" &&
+      event?.type === "assistant.delta" &&
+      activeThreadId &&
+      activeTurnId &&
+      event.threadId === activeThreadId &&
+      event.turnId === activeTurnId
+    ) {
+      triggerSeen = true;
+    }
+  }
+
+  const followupPayload = kind === "steer"
+    ? {
+        type: "codex.turn.steer",
+        threadId: activeThreadId,
+        turnId: activeTurnId,
+        prompt: followupPrompt,
+      }
+    : {
+        type: "codex.turn.interrupt",
+        threadId: activeThreadId,
+        turnId: activeTurnId,
+      };
+  clientSocket.send(JSON.stringify({
+    type: "client.toHost",
+    hostId,
+    payload: followupPayload,
+  }));
+
+  let terminal = null;
+  while (!terminal) {
+    const message = await reader.read(deadline);
+    if (typeof message.event?.sequence === "number") {
+      replay.latestRelaySequence = Math.max(replay.latestRelaySequence ?? 0, message.event.sequence);
+    }
+    if (message.type === "relay.error") {
+      throw new Error(`Relay error during ${kind} smoke followup: ${message.code} ${message.message}`);
+    }
+    if (message.event?.event?.type === "error.reported") {
+      throw new Error(`Host error during ${kind} smoke followup: ${message.event.event.message}`);
+    }
+    const event = message.event?.event;
+    if (
+      event?.type === "turn.status.changed" &&
+      event.threadId === activeThreadId &&
+      event.turnId === activeTurnId &&
+      (event.status === "completed" || event.status === "failed" || event.status === "canceled")
+    ) {
+      terminal = event.status;
+    }
+  }
+
+  return { threadId: activeThreadId, turnId: activeTurnId, terminal };
 }
 
 async function openClientSession({ relayUrl, deviceSession, hostId, afterSequence, deadline }) {
