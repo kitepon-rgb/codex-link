@@ -108,7 +108,7 @@ public final class CodexLinkRelayWebSocketClient: @unchecked Sendable {
             )
         }
 
-        try await subscribeHost(hostId: hostId, afterSequence: bookmark.lastRelaySequence)
+        try await subscribeHost(hostId: hostId, afterSequence: nil)
 
         var projection = startingProjection
         var restoredBookmark = bookmark

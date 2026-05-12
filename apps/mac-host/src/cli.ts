@@ -20,6 +20,10 @@ const relay = new MacHostRelayClient({
       });
     });
   },
+  onClose: (code, reason) => {
+    console.error(`Relay WebSocket closed (code=${code} reason=${reason}). Exiting for launchd to restart.`);
+    process.exit(1);
+  },
 });
 const codex = await startMacHostCodexAppServer({
   config,
@@ -77,6 +81,8 @@ process.on("SIGTERM", () => {
   void codex.close();
   process.exit(0);
 });
+
+await new Promise<never>(() => {});
 
 function buildPairingDeepLink(input: {
   relayUrl: string;

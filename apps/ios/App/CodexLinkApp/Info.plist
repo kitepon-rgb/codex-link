@@ -34,7 +34,7 @@
 	<key>CodexLinkDisplayName</key>
 	<string>owner</string>
 	<key>CodexLinkRelayURL</key>
-	<string>http://127.0.0.1:3000</string>
+	<string>https://codex-link.kitepon.dynv6.net</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>

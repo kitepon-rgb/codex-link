@@ -252,3 +252,13 @@ packages/
 ```
 
 `pc-host` と `packages/security` は将来候補です。MVP が一周動くまでは作らず、必要になった時点で追加します。
+
+## 公開デプロイ構成 (Phase 8 採用)
+
+MVP が iPhone 実機 (5G セルラー含む) から到達するためには、Relay を公衆網から TLS 終端付きで見せる必要があります。本リポジトリで採用している構成:
+
+- **DNS**: 動的 DNS (例: `dynv6.net`) で `<sub>.<root>.dynv6.net` を自宅 router の WAN IP に向ける。Caddy が cert を Let's Encrypt から自動取得できるよう、公開 80/443 を router で port forward する。
+- **TLS / リバースプロキシ**: 既存の `caddy:2` コンテナ (ホスト 80/443 を公開) の `Caddyfile` に sub-domain ブロックを追加し、`reverse_proxy <LAN IP>:<internal port> { flush_interval -1 }` で Relay コンテナに forward。WebSocket upgrade は Caddy が自動で扱う。
+- **Relay コンテナ**: 同サーバ上で `services/relay/Dockerfile` を build (`docker build -t codex-link-relay:latest -f services/relay/Dockerfile .`)、`-p <LAN IP>:<internal port>:3000` で LAN 内側だけに bind し、Caddy 経由でのみ外部公開する (Relay 自身は public IP を listen しない)。env: `CODEX_LINK_RELAY_URL=https://<sub>.<root>.dynv6.net` (発行 deep link 用)、`CODEX_LINK_HOST_BOOTSTRAP_TOKEN=<random>` (Mac Host installer 用)。
+- **Mac Host (LAN 内)**: 自宅 router がヘアピン NAT を解決できない場合、Mac は同 LAN 内から WAN IP に到達できないため、Mac の `/etc/hosts` に `<LAN IP> <sub>.<root>.dynv6.net` を追加して直接 LAN 経由で Caddy に届かせる。Mac Host 自体は `~/Library/LaunchAgents/dev.codex-link.mac-host.plist` の `launchctl` agent として常駐 (`KeepAlive=true` でクラッシュ自動再起動、WebSocket close 時は `process.exit(1)` で再起動を誘発)。
+- **Relay 状態の前提**: 現 MVP の Relay は in-memory のみ。コンテナ再起動 = 全 device session / HostAccess / pairing code / event cache 喪失。iPhone 側は起動時に `revalidateDeviceSession` (= rotate 試行) で 401 を検知したら fresh register に倒す自動リカバリを持つが、HostAccess は復旧不能なので **Relay 再起動後はユーザーに QR 再 pair を要求**する。Phase 9 の永続化対象。

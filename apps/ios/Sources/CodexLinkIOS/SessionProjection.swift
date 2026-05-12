@@ -28,6 +28,9 @@ public struct CodexLinkProjection: Equatable, Sendable {
             projectsByHost[hostId] = projects
         case .threadStarted(let thread):
             threads[thread.id] = thread
+            if let latestError, latestError.contains(thread.id) {
+                self.latestError = nil
+            }
         case .turnStatusChanged(_, let turnId, let status):
             turnStatus[turnId] = status
         case .assistantDelta(let threadId, let turnId, let text):
@@ -38,6 +41,9 @@ public struct CodexLinkProjection: Equatable, Sendable {
             recordTranscriptItem(
                 TranscriptItem(id: itemId, threadId: threadId, turnId: turnId, role: role, text: text)
             )
+            if let latestError, latestError.contains(threadId) {
+                self.latestError = nil
+            }
         case .timelineItemStarted(let threadId, let turnId, let itemId, let label, let detail):
             upsertTimelineItem(
                 TimelineItem(
@@ -65,6 +71,12 @@ public struct CodexLinkProjection: Equatable, Sendable {
         case .diagnosticReported(let diagnostic):
             diagnostics.append(diagnostic)
         case .errorReported(_, let message):
+            if message.hasPrefix("thread not found") {
+                let threadId = message.split(separator: ":").last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+                if !threadId.isEmpty, threads[threadId] != nil {
+                    return
+                }
+            }
             latestError = message
         }
     }
@@ -109,6 +121,14 @@ public struct CodexLinkProjection: Equatable, Sendable {
                $0.id == "assistant-delta-\(item.turnId)"
            }) {
             transcript[deltaIndex] = item
+            return
+        }
+        if transcript.contains(where: {
+            $0.threadId == item.threadId &&
+            $0.turnId == item.turnId &&
+            $0.role == item.role &&
+            $0.text == item.text
+        }) {
             return
         }
         transcript.append(item)

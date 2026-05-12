@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -70,8 +70,8 @@
 		8A0000000000000000000002 = {
 			isa = PBXGroup;
 			children = (
-				8A0000000000000000000004 /* CodexLinkApp */,
-				8A0000000000000000000005 /* CodexLinkWidgets */,
+				8A0000000000000000000004 /* App/CodexLinkApp */,
+				8A0000000000000000000005 /* App/CodexLinkWidgets */,
 				8A0000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -85,7 +85,7 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		8A0000000000000000000004 /* CodexLinkApp */ = {
+		8A0000000000000000000004 /* App/CodexLinkApp */ = {
 			isa = PBXGroup;
 			children = (
 				8A0000000000000000000030 /* CodexLinkApp.swift */,
@@ -94,7 +94,7 @@
 			path = App/CodexLinkApp;
 			sourceTree = "<group>";
 		};
-		8A0000000000000000000005 /* CodexLinkWidgets */ = {
+		8A0000000000000000000005 /* App/CodexLinkWidgets */ = {
 			isa = PBXGroup;
 			children = (
 				8A0000000000000000000032 /* CodexLinkWidgetsBundle.swift */,
@@ -286,7 +286,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/CodexLinkApp/CodexLinkApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = TPWX489GV4;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/CodexLinkApp/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -310,7 +310,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/CodexLinkApp/CodexLinkApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = TPWX489GV4;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/CodexLinkApp/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -333,7 +333,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = TPWX489GV4;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/CodexLinkWidgets/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -358,7 +358,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = TPWX489GV4;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/CodexLinkWidgets/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

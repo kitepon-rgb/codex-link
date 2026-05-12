@@ -1,0 +1,6 @@
+services:
+  relay:
+    ports:
+      - "0.0.0.0:3000:3000"
+    environment:
+      CODEX_LINK_RELAY_URL: "http://192.168.1.101:3000"

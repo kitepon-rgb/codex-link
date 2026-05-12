@@ -1,6 +1,7 @@
 .claude/
 .spotter/
 .vscode/
+.codex-sidecar/
 node_modules/
 **/node_modules/
 dist/
@@ -10,3 +11,8 @@ dist/
 .swiftpm/
 **/.swiftpm/
 tmp/
+.DS_Store
+**/.DS_Store
+**/xcuserdata/
+**/*.xcworkspace/xcuserdata/
+apps/ios/CodexLink.xcodeproj/project.xcworkspace/xcuserdata/

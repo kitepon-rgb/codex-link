@@ -145,7 +145,7 @@ private struct HostPickerView: View {
                 }
             }
             #if os(iOS)
-            .sheet(isPresented: $isPresentingScanner) {
+            .fullScreenCover(isPresented: $isPresentingScanner) {
                 CodexLinkPairingScannerView(
                     onPairingPayload: { payload in
                         isPresentingScanner = false
@@ -294,6 +294,9 @@ private struct SessionScreen: View {
                     .padding(.top, 16)
                     .padding(.bottom, 18)
                 }
+                #if os(iOS)
+                .scrollDismissesKeyboard(.interactively)
+                #endif
                 .onChange(of: visibleTranscript.last?.id) { _, itemId in
                     guard let itemId else {
                         return
@@ -792,6 +795,7 @@ private struct ComposerBar: View {
     @Binding var showTimeline: Bool
     let send: () -> Void
     let interrupt: () -> Void
+    @FocusState private var isComposerFocused: Bool
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
@@ -810,6 +814,15 @@ private struct ComposerBar: View {
                 .padding(.vertical, 10)
                 .background(Color.secondary.opacity(0.10))
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .focused($isComposerFocused)
+                .toolbar {
+                    #if os(iOS)
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Done") { isComposerFocused = false }
+                    }
+                    #endif
+                }
 
             if isRunning {
                 Button(action: interrupt) {

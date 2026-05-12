@@ -92,6 +92,8 @@ Phase 8 の認証モデル:
   3. **WebSocket session** は揮発で、reconnect は `subscribeHost { afterSequence }` で gap 無し復旧。MVP 既に実装済。
 - iOS app は Keychain access に entitlement section を必要とします (`-34018 errSecMissingEntitlement` 回避)。最小 `<dict/>` 空の `CodexLinkApp.entitlements` を target に当てて embed します。`keychain-access-groups` の追加は app と widget 間で credential 共有が必要になった時点で別 PR で扱います。
 - iPhone 側 device credential を紛失した場合 (アプリ削除 / Keychain 破損 / 他端末への移行) は QR 再スキャンで再 pair します。Mac Host は ChatGPT account 認証が生きている限り何度でも pairing code を再発行できるため、ユーザー側の追加操作はありません。
+- Relay の **in-memory state リセット (再デプロイ / プロセス再起動)** で iPhone / Mac Host が保持していた device credential が server 側で未知になった場合、iPhone は起動時に `/api/device-credential/rotate` を試行して 401 が返れば「server 側で session が消えた」とみなし、Keychain と bookmark をクリアして fresh register に倒します。Mac Host は WebSocket close を検知して `process.exit(1)` し、`launchd` の `KeepAlive=true` で自動再起動 + 再 announce します。Relay state を永続化していない MVP の運用上、ユーザーには「Relay 再起動後は QR 再スキャンが必要」になります (= HostAccess も同時に消えるため、credential rotate だけでは復旧しない)。
+- pairing code は **single-use** です。最初の `/api/device-session/pair` 呼び出しで `consumedAt` が立ち、以降の同 code redeem は `HOST_ACCESS_DENIED` (HTTP 401) になります。iPhone 側のリトライや UI の二度押しで意図せず消費されないよう、pair 成功後は composer 画面に遷移して再度 Pair Host を表示しません。同じ Mac Host で再 pair したい場合は Mac Host 側で kickstart して新しい code を発行します。
 
 Phase 8 が境界を変えるのは「pair の発行根拠を ChatGPT account に固定し、UI を QR + 恒久 credential に置き換える」点だけで、Relay の broker-only 性、`~/.codex` 不所持、Codex 不実行といった既存原則には影響しません。Codex Link 自身は ChatGPT のトークンや refresh token を保存せず、`account/read` で取れる email / accountId / planType だけを Host metadata として保持します。
 

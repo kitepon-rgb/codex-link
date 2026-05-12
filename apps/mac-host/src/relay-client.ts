@@ -7,6 +7,7 @@ export interface MacHostRelayClientOptions {
   config: MacHostConfig;
   WebSocketImpl?: typeof WebSocket;
   onHostMessage?: (payload: unknown) => void;
+  onClose?: (code: number, reason: string) => void;
 }
 
 export interface MacHostPairingCode {
@@ -41,8 +42,9 @@ export class MacHostRelayClient {
         socket.on("error", (error) => {
           this.rejectPairingCodeRequest(error);
         });
-        socket.on("close", () => {
+        socket.on("close", (code: number, reason: Buffer) => {
           this.rejectPairingCodeRequest(new Error("Relay WebSocket closed"));
+          this.options.onClose?.(code, reason.toString());
         });
         resolve();
       });

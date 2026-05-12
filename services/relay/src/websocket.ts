@@ -255,13 +255,19 @@ export class RelayWebSocketGateway {
         scope: "ws.client.subscribe_host",
         key: `${session.userId}:${message.hostId}`,
       });
-      this.relay.assertHostAccess(session.userId, message.hostId);
+      try {
+        this.relay.assertHostAccess(session.userId, message.hostId);
+      } catch (error) {
+        console.log(`[subscribe] DENIED user=${session.userId} device=${session.deviceId} host=${message.hostId} reason=${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      }
       const afterSequence = message.afterSequence ?? 0;
       const replay = this.relay.readHostEventReplay(
         session.userId,
         message.hostId,
         afterSequence,
       );
+      console.log(`[subscribe] OK user=${session.userId} device=${session.deviceId} host=${message.hostId} afterSeq=${afterSequence} replayCount=${replay.events.length} latestSeq=${replay.latestSequence}`);
       session.subscriptions.add(message.hostId);
       for (const event of replay.events) {
         this.send(session.socket, { type: "host.event", event });

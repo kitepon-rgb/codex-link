@@ -193,7 +193,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
             let restored = try await startup.restore(startingProjection: projection)
             projection = restored.projection
             selection = restored.selection
-            lastRelaySequence = restored.bookmark?.lastRelaySequence
+            lastRelaySequence = nil
             persistSelection(previousSelection: selection)
             connectionState = restored.restoredFromRelay ? .restored : .connected
 
@@ -210,7 +210,16 @@ public final class CodexLinkAppViewModel: ObservableObject {
         configuration: CodexLinkAppRuntimeConfiguration
     ) async throws -> CodexLinkDeviceSession {
         if let stored = try deviceSessionStore.loadDeviceSession() {
-            return await maybeRotateDeviceCredential(stored, now: Date())
+            if stored.relayUrl == configuration.relayURL.absoluteString {
+                if let revalidated = await revalidateDeviceSession(stored) {
+                    if revalidated.deviceToken != stored.deviceToken {
+                        try? deviceSessionStore.saveDeviceSession(revalidated)
+                    }
+                    return revalidated
+                }
+                try? bookmarkStore.clearBookmark()
+            }
+            try deviceSessionStore.clearDeviceSession()
         }
         guard let deviceSessionClient else {
             throw CodexLinkAppLifecycleError.missingConfiguration(
@@ -223,6 +232,30 @@ public final class CodexLinkAppViewModel: ObservableObject {
         )
         try deviceSessionStore.saveDeviceSession(registered)
         return registered
+    }
+
+    private func revalidateDeviceSession(_ session: CodexLinkDeviceSession) async -> CodexLinkDeviceSession? {
+        guard let deviceSessionClient else { return session }
+        do {
+            let rotated = try await deviceSessionClient.rotateDeviceCredential(
+                userId: session.userId,
+                deviceId: session.deviceId,
+                deviceToken: session.deviceToken
+            )
+            return CodexLinkDeviceSession(
+                relayUrl: rotated.relayUrl,
+                userId: rotated.userId,
+                deviceId: rotated.deviceId,
+                deviceToken: rotated.deviceToken,
+                deviceTokenExpiresAt: rotated.deviceTokenExpiresAt,
+                displayName: session.displayName,
+                deviceName: session.deviceName
+            )
+        } catch CodexLinkDeviceSessionClientError.invalidHTTPStatus(let status) where status == 401 {
+            return nil
+        } catch {
+            return session
+        }
     }
 
     static let deviceCredentialRotationThreshold: TimeInterval = 7 * 24 * 60 * 60

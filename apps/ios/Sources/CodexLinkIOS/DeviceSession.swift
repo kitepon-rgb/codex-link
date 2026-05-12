@@ -241,7 +241,7 @@ public final class CodexLinkKeychainDeviceSessionStore: CodexLinkDeviceSessionSt
 
     public init(
         service: String = "com.codex-link.ios.device-session",
-        account: String = "default",
+        account: String = "default-v2",
         accessGroup: String? = nil,
         encoder: JSONEncoder = JSONEncoder(),
         decoder: JSONDecoder = JSONDecoder()
@@ -263,6 +263,13 @@ public final class CodexLinkKeychainDeviceSessionStore: CodexLinkDeviceSessionSt
         if status == errSecItemNotFound {
             return nil
         }
+        if status == errSecMissingEntitlement {
+            #if targetEnvironment(simulator)
+            return Self.simulatorFallbackLoad(account: account)
+            #else
+            throw CodexLinkDeviceSessionStoreError.keychainReadFailed(status)
+            #endif
+        }
         guard status == errSecSuccess else {
             throw CodexLinkDeviceSessionStoreError.keychainReadFailed(status)
         }
@@ -279,7 +286,7 @@ public final class CodexLinkKeychainDeviceSessionStore: CodexLinkDeviceSessionSt
     public func saveDeviceSession(_ deviceSession: CodexLinkDeviceSession) throws {
         let data = try encoder.encode(deviceSession)
         let deleteStatus = SecItemDelete(baseQuery() as CFDictionary)
-        if deleteStatus != errSecSuccess && deleteStatus != errSecItemNotFound {
+        if deleteStatus != errSecSuccess && deleteStatus != errSecItemNotFound && deleteStatus != errSecMissingEntitlement {
             throw CodexLinkDeviceSessionStoreError.keychainDeleteFailed(deleteStatus)
         }
 
@@ -290,6 +297,14 @@ public final class CodexLinkKeychainDeviceSessionStore: CodexLinkDeviceSessionSt
 #endif
 
         let status = SecItemAdd(item as CFDictionary, nil)
+        if status == errSecMissingEntitlement {
+            #if targetEnvironment(simulator)
+            Self.simulatorFallbackSave(account: account, data: data)
+            return
+            #else
+            throw CodexLinkDeviceSessionStoreError.keychainWriteFailed(status)
+            #endif
+        }
         guard status == errSecSuccess else {
             throw CodexLinkDeviceSessionStoreError.keychainWriteFailed(status)
         }
@@ -297,9 +312,32 @@ public final class CodexLinkKeychainDeviceSessionStore: CodexLinkDeviceSessionSt
 
     public func clearDeviceSession() throws {
         let status = SecItemDelete(baseQuery() as CFDictionary)
+        if status == errSecMissingEntitlement {
+            #if targetEnvironment(simulator)
+            UserDefaults.standard.removeObject(forKey: Self.simulatorFallbackKey(account: account))
+            return
+            #else
+            throw CodexLinkDeviceSessionStoreError.keychainDeleteFailed(status)
+            #endif
+        }
         if status != errSecSuccess && status != errSecItemNotFound {
             throw CodexLinkDeviceSessionStoreError.keychainDeleteFailed(status)
         }
+    }
+
+    private static func simulatorFallbackKey(account: String) -> String {
+        "codex-link.simulator-device-session.\(account)"
+    }
+
+    private static func simulatorFallbackLoad(account: String) -> CodexLinkDeviceSession? {
+        guard let data = UserDefaults.standard.data(forKey: simulatorFallbackKey(account: account)) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(CodexLinkDeviceSession.self, from: data)
+    }
+
+    private static func simulatorFallbackSave(account: String, data: Data) {
+        UserDefaults.standard.set(data, forKey: simulatorFallbackKey(account: account))
     }
 
     private func baseQuery() -> [String: Any] {
