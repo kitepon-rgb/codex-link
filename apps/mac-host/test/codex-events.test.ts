@@ -24,7 +24,7 @@ describe("Codex app-server event normalization", () => {
     ).toEqual([
       {
         type: "thread.started",
-        thread: { id: "thread_1", projectId, title: "Hello" },
+        thread: { id: "thread_1", projectId, title: "Hello", updatedAt: null },
       },
     ]);
 
@@ -217,7 +217,7 @@ describe("Codex app-server event normalization", () => {
       ),
     ).toEqual({
       type: "thread.started",
-      thread: { id: "thread_1", projectId, title: "Thread title" },
+      thread: { id: "thread_1", projectId, title: "Thread title", updatedAt: null },
     });
     expect(
       turnStartResponseToEvent(
@@ -271,7 +271,7 @@ describe("Codex app-server event normalization", () => {
     ]);
 
     expect(threadListResponseToEvents({ data: [thread] }, projectId)).toEqual([
-      { type: "thread.started", thread: { id: "thread_1", projectId, title: "Preview" } },
+      { type: "thread.started", thread: { id: "thread_1", projectId, title: "Preview", updatedAt: null } },
     ]);
 
     expect(

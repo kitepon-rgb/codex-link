@@ -33,6 +33,7 @@ public final class CodexLinkRelayWebSocketClient: @unchecked Sendable {
     private let session: URLSession
     private let actionEncoder: CodexLinkRelayActionEncoder
     private var task: URLSessionWebSocketTask?
+    private var keepAliveTask: Task<Void, Never>?
 
     public init(
         relayURL: URL,
@@ -57,11 +58,39 @@ public final class CodexLinkRelayWebSocketClient: @unchecked Sendable {
         let task = session.webSocketTask(with: request)
         self.task = task
         task.resume()
+        startKeepAlive(for: task)
     }
 
     public func disconnect() {
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
+    }
+
+    private func startKeepAlive(for task: URLSessionWebSocketTask) {
+        keepAliveTask?.cancel()
+        keepAliveTask = Task { [weak task] in
+            while !Task.isCancelled, let task, task.state == .running {
+                do {
+                    try await Task.sleep(nanoseconds: 20 * 1_000_000_000)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, task.state == .running else {
+                    return
+                }
+                let succeeded = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                    task.sendPing { error in
+                        continuation.resume(returning: error == nil)
+                    }
+                }
+                if !succeeded {
+                    task.cancel(with: .abnormalClosure, reason: nil)
+                    return
+                }
+            }
+        }
     }
 
     public func send(_ action: CodexLinkUIAction, currentHostId: String?, afterSequence: Int? = nil) async throws {

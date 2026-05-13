@@ -62,7 +62,7 @@ describe("MacHostSessionRunner", () => {
     expect(events).toEqual([
       {
         type: "thread.started",
-        thread: { id: "thread_1", projectId: "project_1", title: "Prompt" },
+        thread: { id: "thread_1", projectId: "project_1", title: "Prompt", updatedAt: null },
       },
       {
         type: "turn.status.changed",
@@ -303,7 +303,7 @@ describe("MacHostSessionRunner", () => {
     ]);
     expect(events).toContainEqual({
       type: "thread.started",
-      thread: { id: "thread_1", projectId: "project_1", title: "Preview" },
+      thread: { id: "thread_1", projectId: "project_1", title: "Preview", updatedAt: null },
     });
     expect(events).toContainEqual({
       type: "turn.status.changed",
@@ -323,6 +323,7 @@ function fakeCodexClient(
     initialize: async () => ({}),
     request: requestHandler,
     startThread: (params) => requestHandler("thread/start", params),
+    resumeThread: (params) => requestHandler("thread/resume", params),
     startTurn: (params) => requestHandler("turn/start", params),
     steerTurn: (params) => requestHandler("turn/steer", params),
     interruptTurn: (params) => requestHandler("turn/interrupt", params),

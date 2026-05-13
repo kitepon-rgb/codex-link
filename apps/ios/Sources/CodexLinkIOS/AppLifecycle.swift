@@ -1,5 +1,11 @@
 import Combine
 import Foundation
+import os
+
+enum CodexLinkAppLogger {
+    static let lifecycle = Logger(subsystem: "dev.codexlink.ios", category: "lifecycle")
+    static let relay = Logger(subsystem: "dev.codexlink.ios", category: "relay")
+}
 
 public struct CodexLinkAppRuntimeConfiguration: Equatable, Sendable {
     public let relayURL: URL
@@ -141,6 +147,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
     }
 
     public func handle(_ action: CodexLinkUIAction) {
+        CodexLinkAppLogger.lifecycle.info("handle action: \(String(describing: action), privacy: .public)")
         switch action {
         case .pairHost(let pairingCode):
             Task { [weak self] in
@@ -155,6 +162,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
         case .showInspector:
             break
         case .unsupportedOperation(let reason):
+            CodexLinkAppLogger.lifecycle.error("unsupported operation: \(reason, privacy: .public)")
             recordError(reason)
         default:
             Task { [weak self] in
@@ -168,23 +176,59 @@ public final class CodexLinkAppViewModel: ObservableObject {
             runTask = nil
         }
 
-        do {
-            guard let configuration else {
-                throw CodexLinkAppLifecycleError.missingConfiguration(
-                    configurationErrorMessage ?? "CodexLink app configuration is missing."
-                )
+        var attempt = 0
+        while !Task.isCancelled {
+            do {
+                try await runOnce(isFirstAttempt: attempt == 0)
+                attempt = 0
+            } catch is CancellationError {
+                connectionState = .disconnected
+                return
+            } catch CodexLinkAppLifecycleError.missingConfiguration(let message) {
+                CodexLinkAppLogger.lifecycle.error("run aborted: \(message, privacy: .public)")
+                recordError(message)
+                connectionState = .failed
+                return
+            } catch CodexLinkAppLifecycleError.missingRelayClient {
+                CodexLinkAppLogger.lifecycle.error("run aborted: missing relay client factory")
+                recordError("CodexLink Relay client is missing.")
+                connectionState = .failed
+                return
+            } catch {
+                attempt += 1
+                let delaySeconds = min(30, attempt * 2)
+                CodexLinkAppLogger.relay.error("run failed (attempt \(attempt)): \(String(describing: error), privacy: .public); retrying in \(delaySeconds)s")
+                recordError(describe(error))
+                connectionState = .failed
+                relayClient?.disconnect()
+                relayClient = nil
+                do {
+                    try await Task.sleep(for: .seconds(delaySeconds))
+                } catch {
+                    return
+                }
             }
-            connectionState = .connecting
-            let deviceSession = try await loadOrRegisterDeviceSession(configuration: configuration)
-            self.deviceSession = deviceSession
+        }
+    }
 
-            guard let relayClientFactory else {
-                throw CodexLinkAppLifecycleError.missingRelayClient
-            }
-            let client = try relayClientFactory(deviceSession)
-            relayClient = client
-            try client.connect()
+    private func runOnce(isFirstAttempt: Bool) async throws {
+        guard let configuration else {
+            throw CodexLinkAppLifecycleError.missingConfiguration(
+                configurationErrorMessage ?? "CodexLink app configuration is missing."
+            )
+        }
+        connectionState = .connecting
+        let deviceSession = try await loadOrRegisterDeviceSession(configuration: configuration)
+        self.deviceSession = deviceSession
 
+        guard let relayClientFactory else {
+            throw CodexLinkAppLifecycleError.missingRelayClient
+        }
+        let client = try relayClientFactory(deviceSession)
+        relayClient = client
+        try client.connect()
+
+        if isFirstAttempt {
             connectionState = .restoring
             let startup = CodexLinkStartupRestorer(
                 bookmarkStore: bookmarkStore,
@@ -196,14 +240,32 @@ public final class CodexLinkAppViewModel: ObservableObject {
             lastRelaySequence = nil
             persistSelection(previousSelection: selection)
             connectionState = restored.restoredFromRelay ? .restored : .connected
-
-            try await receiveLoop(client: client)
-        } catch is CancellationError {
-            connectionState = .disconnected
-        } catch {
-            recordError(describe(error))
-            connectionState = .failed
+        } else if let hostId = selection.hostId {
+            CodexLinkAppLogger.lifecycle.info("reconnect: resubscribing host \(hostId, privacy: .public) afterSequence=\(self.lastRelaySequence ?? -1)")
+            try await client.send(
+                .selectHost(hostId: hostId),
+                currentHostId: hostId,
+                afterSequence: lastRelaySequence
+            )
+            connectionState = .connected
+        } else {
+            connectionState = .connected
         }
+
+        if let projectId = selection.projectId {
+            CodexLinkAppLogger.lifecycle.info("\(isFirstAttempt ? "startup" : "reconnect", privacy: .public): requesting thread list for project \(projectId, privacy: .public)")
+            do {
+                try await client.send(
+                    .selectProject(projectId: projectId),
+                    currentHostId: selection.hostId,
+                    afterSequence: nil
+                )
+            } catch {
+                CodexLinkAppLogger.relay.error("failed to request thread list: \(String(describing: error), privacy: .public)")
+            }
+        }
+
+        try await receiveLoop(client: client)
     }
 
     private func loadOrRegisterDeviceSession(
@@ -406,6 +468,14 @@ public final class CodexLinkAppViewModel: ObservableObject {
                 connectionState = .connected
             }
             persistSelection(previousSelection: selection)
+            if let projectId = selection.projectId {
+                CodexLinkAppLogger.lifecycle.info("subscription ready; refreshing thread list for project \(projectId, privacy: .public)")
+                Task { [weak self] in
+                    await self?.send(.selectProject(projectId: projectId))
+                }
+            } else {
+                CodexLinkAppLogger.lifecycle.info("subscription ready but projectId is nil; waiting for project list")
+            }
         case .error(let code, let message):
             throw CodexLinkRelayClientError.relayError(code: code, message: message)
         case .hostMessage:
@@ -421,6 +491,10 @@ public final class CodexLinkAppViewModel: ObservableObject {
             return
         }
         selection.projectId = project.id
+        CodexLinkAppLogger.lifecycle.info("auto-selected default project \(project.id, privacy: .public); requesting thread list")
+        Task { [weak self] in
+            await self?.send(.selectProject(projectId: project.id))
+        }
     }
 
     private func selectActiveTurnIfNeeded(from event: CodexLinkEvent, hostId: String) {
@@ -467,6 +541,7 @@ public final class CodexLinkAppViewModel: ObservableObject {
 
     private func send(_ action: CodexLinkUIAction) async {
         guard let relayClient else {
+            CodexLinkAppLogger.relay.error("send aborted: relayClient is nil")
             recordError("Relay WebSocket is not connected.")
             connectionState = .failed
             return
@@ -478,14 +553,18 @@ public final class CodexLinkAppViewModel: ObservableObject {
             } else {
                 afterSequence = nil
             }
+            CodexLinkAppLogger.relay.info("dispatching to relay: \(String(describing: action), privacy: .public), currentHostId=\(self.selection.hostId ?? "nil", privacy: .public)")
             try await relayClient.send(
                 action,
                 currentHostId: selection.hostId,
                 afterSequence: afterSequence
             )
+            CodexLinkAppLogger.relay.info("relay send completed")
         } catch CodexLinkRelayClientError.localOnlyAction(let name) {
+            CodexLinkAppLogger.relay.error("local-only action reached binding: \(name, privacy: .public)")
             recordError("Local-only action reached Relay binding: \(name)")
         } catch {
+            CodexLinkAppLogger.relay.error("relay send failed: \(String(describing: error), privacy: .public)")
             recordError(describe(error))
             connectionState = .failed
         }

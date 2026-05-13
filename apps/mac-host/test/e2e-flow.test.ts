@@ -304,6 +304,7 @@ function fakeCodexClient(
     initialize: async () => ({}),
     request: requestHandler,
     startThread: (params) => requestHandler("thread/start", params),
+    resumeThread: (params) => requestHandler("thread/resume", params),
     startTurn: (params) => requestHandler("turn/start", params),
     steerTurn: (params) => requestHandler("turn/steer", params),
     interruptTurn: (params) => requestHandler("turn/interrupt", params),

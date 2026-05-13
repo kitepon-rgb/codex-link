@@ -1,9 +1,11 @@
 import type {
   ApprovalDecisionKind,
   CodexLinkEvent,
+  ItemId,
   ProjectId,
   RequestId,
   ThreadId,
+  TurnId,
 } from "@codex-link/protocol";
 import type { CodexAppServerClient } from "@codex-link/codex-client";
 import type { MacHostConfig, MacHostProjectConfig } from "./config.js";
@@ -17,6 +19,7 @@ import {
   threadTurnsListResponseToEvents,
   turnStartResponseToEvent,
 } from "./codex-events.js";
+import type { VscodeIpcClient, VscodeIpcMessage } from "./vscode-ipc.js";
 
 export interface StartCodexTurnCommand {
   type: "codex.turn.start";
@@ -79,6 +82,7 @@ export interface MacHostSessionRunnerOptions {
   config: MacHostConfig;
   codex: CodexAppServerClient;
   relay: Pick<MacHostRelayClient, "sendHostEvent">;
+  vscodeIpc?: VscodeIpcClient | null;
 }
 
 export class MacHostSessionRunner {
@@ -86,8 +90,149 @@ export class MacHostSessionRunner {
   private readonly pendingApprovalDecisions = new Map<string, ApprovalDecisionKind>();
   private readonly activeTurnByThread = new Map<string, string>();
   private readonly originalRequestIds = new Map<string, string | number>();
+  private readonly vscodeConversations = new Map<string, Record<string, unknown>>();
+  private readonly vscodeSentSignatures = new Map<string, Set<string>>();
 
-  constructor(private readonly options: MacHostSessionRunnerOptions) {}
+  constructor(private readonly options: MacHostSessionRunnerOptions) {
+    if (options.vscodeIpc) {
+      this.attachVscodeIpc(options.vscodeIpc);
+    }
+  }
+
+  replaceVscodeIpc(client: VscodeIpcClient | null): void {
+    this.options.vscodeIpc = client;
+    this.vscodeConversations.clear();
+    this.vscodeSentSignatures.clear();
+    if (client) {
+      this.attachVscodeIpc(client);
+    }
+  }
+
+  private attachVscodeIpc(client: VscodeIpcClient): void {
+    client.onMessage((message) => {
+      try {
+        this.handleVscodeIpcMessage(message);
+      } catch (error) {
+        console.error(
+          `[mac-host] vscode-ipc broadcast handling failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    });
+  }
+
+  private handleVscodeIpcMessage(message: VscodeIpcMessage): void {
+    if (message.type !== "broadcast" || message.method !== "thread-stream-state-changed") {
+      return;
+    }
+    const params = (message.params ?? {}) as {
+      conversationId?: string;
+      hostId?: string;
+      change?: { type?: string; conversationState?: Record<string, unknown>; patches?: Array<Record<string, unknown>> };
+    };
+    const conversationId = params.conversationId;
+    if (!conversationId || params.hostId !== "local") {
+      return;
+    }
+    const change = params.change;
+    if (!change) {
+      return;
+    }
+    let conversation = this.vscodeConversations.get(conversationId);
+    if (change.type === "snapshot" && change.conversationState) {
+      conversation = structuredClone(change.conversationState);
+      this.vscodeConversations.set(conversationId, conversation);
+    } else if (change.type === "patches" && conversation && Array.isArray(change.patches)) {
+      applyVscodePatches(conversation, change.patches);
+    } else {
+      return;
+    }
+    this.emitCodexLinkEventsFromVscodeConversation(conversationId, conversation);
+  }
+
+  private emitCodexLinkEventsFromVscodeConversation(
+    threadId: string,
+    conversation: Record<string, unknown> | undefined,
+  ): void {
+    if (!conversation) return;
+    const turns = (conversation as { turns?: unknown }).turns;
+    if (!Array.isArray(turns)) return;
+    let sent = this.vscodeSentSignatures.get(threadId);
+    if (!sent) {
+      sent = new Set<string>();
+      this.vscodeSentSignatures.set(threadId, sent);
+    }
+    for (const rawTurn of turns) {
+      const turn = (rawTurn ?? {}) as {
+        turnId?: string;
+        status?: string;
+        params?: { input?: Array<{ type?: string; text?: string }> };
+        items?: Array<{ type?: string; text?: string }>;
+      };
+      const turnId = typeof turn.turnId === "string" ? turn.turnId : null;
+      if (!turnId) continue;
+      const status =
+        turn.status === "inProgress"
+          ? "running"
+          : turn.status === "failed"
+            ? "failed"
+            : turn.status === "completed"
+              ? "completed"
+              : null;
+      if (status) {
+        const key = `${turnId}|status|${status}`;
+        if (!sent.has(key)) {
+          sent.add(key);
+          this.sendMaybe({
+            type: "turn.status.changed",
+            threadId: threadId as ThreadId,
+            turnId: turnId as TurnId,
+            status: status as "running" | "completed" | "failed",
+          });
+          if (status === "running") {
+            this.activeTurnByThread.set(threadId, turnId);
+          }
+        }
+      }
+      const userTexts = Array.isArray(turn.params?.input)
+        ? turn.params!.input
+            .filter((piece) => piece?.type === "text" && typeof piece.text === "string")
+            .map((piece) => piece.text!)
+        : [];
+      const userText = userTexts.join("");
+      if (userText) {
+        const key = `${turnId}|user|${userText}`;
+        if (!sent.has(key)) {
+          sent.add(key);
+          this.sendMaybe({
+            type: "transcript.item.recorded",
+            threadId: threadId as ThreadId,
+            turnId: turnId as TurnId,
+            itemId: `${turnId}-user-0` as ItemId,
+            role: "user",
+            text: userText,
+          });
+        }
+      }
+      const items = Array.isArray(turn.items) ? turn.items : [];
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
+        if (item?.type === "agentMessage" && typeof item.text === "string" && item.text.length > 0) {
+          const key = `${turnId}|agent|${i}|${item.text.length}|${item.text.slice(-32)}`;
+          if (!sent.has(key)) {
+            sent.add(key);
+            this.sendMaybe({
+              type: "transcript.item.recorded",
+              threadId: threadId as ThreadId,
+              turnId: turnId as TurnId,
+              itemId: `${turnId}-agent-${i}` as ItemId,
+              role: "assistant",
+              text: item.text,
+            });
+          }
+        }
+      }
+    }
+  }
 
   async handleCommand(command: unknown): Promise<void> {
     if (isStartCodexTurnCommand(command)) {
@@ -123,15 +268,61 @@ export class MacHostSessionRunner {
 
   async startTurn(command: StartCodexTurnCommand): Promise<void> {
     const project = this.projectFor(command.projectId);
+    const cwd = command.cwd ?? project.path;
+
+    if (command.threadId && this.options.vscodeIpc?.isOpen) {
+      try {
+        const turnStartParams: Record<string, unknown> = {
+          cwd,
+          input: [{ type: "text", text: command.prompt, text_elements: [] }],
+        };
+        const response = await this.options.vscodeIpc.request(
+          "thread-follower-start-turn",
+          { conversationId: command.threadId, turnStartParams },
+          { version: 1, timeoutMs: 15000 },
+        );
+        if (response.resultType !== "success") {
+          throw new Error(response.error ?? "vscode_ipc_start_turn_failed");
+        }
+        const turnIdValue = (response.result as { turn?: { id?: string } } | undefined)?.turn?.id;
+        if (turnIdValue) {
+          this.activeTurnByThread.set(command.threadId, turnIdValue);
+          this.sendMaybe({
+            type: "turn.status.changed",
+            threadId: command.threadId as ThreadId,
+            turnId: turnIdValue as TurnId,
+            status: "running",
+          });
+        }
+        return;
+      } catch (error) {
+        console.error(
+          `[mac-host] VS Code IPC start-turn failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw error;
+      }
+    }
+
     const threadOverrides: { cwd?: string; approvalPolicy?: unknown; sandbox?: unknown } = {};
     if (command.cwd !== undefined) threadOverrides.cwd = command.cwd;
     if (command.approvalPolicy !== undefined) threadOverrides.approvalPolicy = command.approvalPolicy;
     if (command.sandbox !== undefined) threadOverrides.sandbox = command.sandbox;
-    const threadId = command.threadId ?? (await this.startThread(project, threadOverrides));
+    let threadId: ThreadId;
+    if (command.threadId) {
+      threadId = command.threadId;
+      try {
+        await this.options.codex.resumeThread({ threadId, cwd });
+      } catch (error) {
+        console.error(`[mac-host] thread/resume failed for ${threadId}: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      }
+    } else {
+      threadId = await this.startThread(project, threadOverrides);
+    }
     const turnParams: Record<string, unknown> = {
       threadId,
       input: [{ type: "text", text: command.prompt, text_elements: [] }],
-      cwd: command.cwd ?? project.path,
+      cwd,
     };
     const turnResponse = await this.options.codex.startTurn(turnParams);
     const turnEvent = turnStartResponseToEvent(turnResponse, threadId);
@@ -467,4 +658,50 @@ function threadIdFromResponse(response: unknown): ThreadId | null {
   }
   const threadId = (thread as { id?: unknown }).id;
   return typeof threadId === "string" ? (threadId as ThreadId) : null;
+}
+
+function applyVscodePatches(target: Record<string, unknown>, patches: Array<Record<string, unknown>>): void {
+  for (const patch of patches) {
+    const pathRaw = (patch as { path?: unknown }).path;
+    const pathParts: string[] = Array.isArray(pathRaw)
+      ? (pathRaw as unknown[]).map((segment) => String(segment))
+      : typeof pathRaw === "string"
+        ? pathRaw.split("/").filter((segment) => segment.length > 0)
+        : [];
+    if (pathParts.length === 0) continue;
+    let parent: unknown = target;
+    for (let i = 0; i < pathParts.length - 1; i += 1) {
+      const segment = pathParts[i];
+      if (segment === undefined) {
+        parent = null;
+        break;
+      }
+      if (parent && typeof parent === "object") {
+        parent = (parent as Record<string, unknown>)[segment];
+      } else {
+        parent = null;
+        break;
+      }
+    }
+    if (parent == null || typeof parent !== "object") continue;
+    const lastKey = pathParts[pathParts.length - 1];
+    if (lastKey === undefined) continue;
+    const op = (patch as { op?: unknown }).op;
+    const value = (patch as { value?: unknown }).value;
+    if (op === "remove") {
+      if (Array.isArray(parent)) {
+        (parent as unknown[]).splice(Number(lastKey), 1);
+      } else {
+        delete (parent as Record<string, unknown>)[lastKey];
+      }
+      continue;
+    }
+    if (op === "add" && Array.isArray(parent)) {
+      const arr = parent as unknown[];
+      const idx = lastKey === "-" ? arr.length : Number(lastKey);
+      arr.splice(idx, 0, value);
+      continue;
+    }
+    (parent as Record<string, unknown>)[lastKey] = value;
+  }
 }

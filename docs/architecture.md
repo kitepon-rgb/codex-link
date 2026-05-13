@@ -146,16 +146,28 @@ Codex Link protocol
 
 Host app は、Codex app-server client として振る舞います。
 
-優先する検証順:
+優先する経路 (動的に選択):
 
-1. `codex app-server` の stdio transport。
-2. loopback WebSocket。
-3. SSH port forwarding 越しの loopback WebSocket。
-4. `codex remote-control` の headless entrypoint。
+1. **VS Code Codex 拡張の IPC socket** (Unix domain socket: `$TMPDIR/codex-ipc/ipc-$UID.sock`)
+   - VS Code 起動中のみ存在。VS Code Codex 拡張内部の app-server プロセスに **follower** として接続する。
+   - 接続するのは `mac-host` 起動時に `existsSync(socketPath)` で検出 → `VscodeIpcClient` で `initialize { clientType }` ハンドシェイク。
+   - `turn/start` 系は `thread-follower-start-turn` (version 1) を投げ、broadcast `thread-stream-state-changed` (snapshot + JSON patches) を listen して `CodexLinkEvent` に正規化 (`session.ts` 内 `emitCodexLinkEventsFromVscodeConversation`)。
+   - これにより、iPhone から始めた turn が VS Code 側拡張 UI にも **同一 app-server プロセス内で live 反映**される。
+   - 発動条件: socket が存在し、`connect()` が成功する。失敗時は次の経路にフォールバックし、その理由をログに出す。
+2. `codex app-server` の **stdio transport** (= 自前で `codex` を spawn する経路)
+   - VS Code IPC socket が無い時の既定経路。Host プロセス内部に独立した app-server を持つので、VS Code 側拡張とは thread state を共有しない (cross-process sync は Codex CLI 自体が提供しないため)。jsonl ファイルは共通なので、再 open すれば見える。
+3. **loopback WebSocket** (`codex app-server --listen ws://127.0.0.1:PORT`) — **CLI 用 live 同期の MVP 経路**
+   - Mac Host は (1) VS Code IPC socket が無い状況で `codex app-server --listen ws://127.0.0.1:<port>` を自前で spawn し、自身は loopback WS client として接続する。
+   - **Codex CLI ユーザーは `codex tui --remote ws://127.0.0.1:<port> --remote-auth-token-env CODEX_LINK_APP_SERVER_TOKEN` で同じ app-server に接続**できる。これで CLI 側で開いた thread の turn が iPhone に live で見え、iPhone から送った turn も CLI TUI に live で反映される。
+   - port と bearer token は Mac Host 起動時にログと `~/.codex-link/host.json` (またはユーザー環境変数) に書き出し、`codex-link cli-attach` のような wrapper を提供して手入力を不要にする。
+   - **VS Code Codex 拡張** は外部 ws:// endpoint への接続 UI を現状公開していない (拡張内蔵の stdio app-server を spawn する仕様)。したがって「VS Code と CLI を**同一**の app-server で同時共有する」は VS Code 拡張側の改修を前提とし、Codex Link コード単独では実現しない。
+   - 動的選択: VS Code 起動中は (1) IPC follower 経路、未起動なら (3) loopback WS 経路。Mac Host は両者を切り替えながらどちらの場合でも live 同期を提供する。
+4. **SSH port forwarding** 越しの loopback WebSocket は、上記 (3) の延長。
+5. **`codex remote-control`** は ChatGPT 側 remote-control backend への enrollment 前提なので、local Host が直接 JSON-RPC 接続する入口とは別物として扱います (現状 enrollment が 404)。
 
-WebSocket transport は experimental / unsupported なので、MVP の安定経路は stdio を第一候補にします。ただし、iPhone から長時間セッションを見続ける体験に WebSocket が有利な場合は、loopback + Host 内部接続または SSH port forwarding に閉じて採用を検証します。
+WebSocket transport は experimental / unsupported です。MVP の安定経路は (1) VS Code IPC → (2) stdio です。
 
-`codex remote-control` は ChatGPT 側 remote-control backend への enrollment が前提のため、local Host が直接 JSON-RPC 接続する入口とは別物として扱います。
+フォールバックの可視化: (1) が利用できない理由は cli 起動時に `console.log` で必ず示し、(`socket not present` / `connect failed: ...`)、ユーザーから「なぜ live 同期しないのか」が即わかるようにする。
 
 Host が app-server から受ける主な event:
 

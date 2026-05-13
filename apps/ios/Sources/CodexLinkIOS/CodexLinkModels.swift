@@ -61,11 +61,13 @@ public struct ThreadRef: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let projectId: String
     public let title: String?
+    public let updatedAt: String?
 
-    public init(id: String, projectId: String, title: String?) {
+    public init(id: String, projectId: String, title: String?, updatedAt: String? = nil) {
         self.id = id
         self.projectId = projectId
         self.title = title
+        self.updatedAt = updatedAt
     }
 }
 

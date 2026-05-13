@@ -75,7 +75,7 @@ struct CodexLinkPreviewCanvas: View {
     }
 }
 
-enum CodexLinkPreviewState {
+enum CodexLinkPreviewState: String {
     case hostPicker
     case running
     case approval

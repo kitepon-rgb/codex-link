@@ -6,6 +6,7 @@ import UIKit
 @main
 struct CodexLinkApp: App {
     @StateObject private var model: CodexLinkAppViewModel
+    @Environment(\.scenePhase) private var scenePhase
 
     private let liveActivityController = CodexLinkLiveActivityController()
 
@@ -39,6 +40,11 @@ struct CodexLinkApp: App {
             }
             .onOpenURL { url in
                 model.openDeepLink(url)
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    model.start()
+                }
             }
         }
     }

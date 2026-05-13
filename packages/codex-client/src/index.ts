@@ -60,6 +60,7 @@ export interface CodexAppServerClient {
   initialize(): Promise<unknown>;
   request(method: string, params?: unknown): Promise<unknown>;
   startThread(params: unknown): Promise<unknown>;
+  resumeThread(params: unknown): Promise<unknown>;
   startTurn(params: unknown): Promise<unknown>;
   steerTurn(params: unknown): Promise<unknown>;
   interruptTurn(params: unknown): Promise<unknown>;
@@ -149,6 +150,10 @@ export class CodexAppServerStdioClient implements CodexAppServerClient {
 
   startThread(params: unknown): Promise<unknown> {
     return this.request("thread/start", params);
+  }
+
+  resumeThread(params: unknown): Promise<unknown> {
+    return this.request("thread/resume", params);
   }
 
   startTurn(params: unknown): Promise<unknown> {

@@ -5,6 +5,11 @@ import { readCodexAppServerCapabilities } from "./capabilities.js";
 import { startMacHostCodexAppServer } from "./codex.js";
 import { MacHostRelayClient } from "./relay-client.js";
 import { MacHostSessionRunner } from "./session.js";
+import {
+  VscodeIpcClient,
+  defaultVscodeIpcSocketPath,
+  vscodeIpcSocketAvailable,
+} from "./vscode-ipc.js";
 
 const configPath = process.argv.slice(2).find((argument) => argument !== "--");
 const config = await loadMacHostConfig(configPath);
@@ -32,7 +37,59 @@ const codex = await startMacHostCodexAppServer({
     onServerRequest: (message) => runner?.handleCodexServerRequest(message),
   },
 });
-runner = new MacHostSessionRunner({ config, codex, relay });
+const vscodeIpcSocketPath = defaultVscodeIpcSocketPath();
+let vscodeIpc: VscodeIpcClient | null = null;
+
+async function tryConnectVscodeIpc(): Promise<VscodeIpcClient | null> {
+  if (!vscodeIpcSocketAvailable(vscodeIpcSocketPath)) {
+    return null;
+  }
+  try {
+    return await VscodeIpcClient.connect({
+      clientType: "codex-link-mac-host",
+      socketPath: vscodeIpcSocketPath,
+      onClose: () => {
+        console.log("[mac-host] VS Code Codex IPC disconnected; will attempt reconnect when VS Code is available");
+        vscodeIpc = null;
+        runner?.replaceVscodeIpc(null);
+      },
+    });
+  } catch (error) {
+    console.error(
+      `[mac-host] VS Code Codex IPC connect failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
+}
+
+vscodeIpc = await tryConnectVscodeIpc();
+if (vscodeIpc) {
+  console.log(`[mac-host] VS Code Codex IPC connected at ${vscodeIpcSocketPath}; turn forwarding will go through VS Code app-server for live sync`);
+} else {
+  console.log(
+    `[mac-host] VS Code Codex IPC unavailable at ${vscodeIpcSocketPath}. Falling back to spawned stdio app-server; live sync to VS Code will activate automatically when VS Code Codex starts.`,
+  );
+}
+
+runner = new MacHostSessionRunner({ config, codex, relay, vscodeIpc });
+
+const ipcSupervisor = setInterval(() => {
+  if (vscodeIpc && vscodeIpc.isOpen) {
+    return;
+  }
+  if (!vscodeIpcSocketAvailable(vscodeIpcSocketPath)) {
+    return;
+  }
+  void (async () => {
+    const reconnected = await tryConnectVscodeIpc();
+    if (reconnected) {
+      vscodeIpc = reconnected;
+      runner?.replaceVscodeIpc(reconnected);
+      console.log("[mac-host] VS Code Codex IPC reconnected; live sync to VS Code resumed");
+    }
+  })();
+}, 5000);
+ipcSupervisor.unref();
 
 await relay.connect();
 await relay.announce();

@@ -33,6 +33,7 @@ export function codexNotificationToEvents(
           id: threadId as ThreadId,
           projectId,
           title: stringValue(thread?.name) ?? stringValue(thread?.preview) ?? null,
+          updatedAt: thread ? threadUpdatedAt(thread) : null,
         },
       },
     ];
@@ -356,8 +357,21 @@ function threadToStartedEvent(
       id: threadId as ThreadId,
       projectId,
       title: stringValue(thread.name) ?? stringValue(thread.preview) ?? null,
+      updatedAt: threadUpdatedAt(thread),
     },
   };
+}
+
+function threadUpdatedAt(thread: Record<string, unknown>): string | null {
+  return (
+    stringValue(thread.updated_at) ??
+    stringValue(thread.updatedAt) ??
+    stringValue(thread.last_used_at) ??
+    stringValue(thread.lastUsedAt) ??
+    stringValue(thread.created_at) ??
+    stringValue(thread.createdAt) ??
+    null
+  );
 }
 
 function turnToEvents(
@@ -412,6 +426,7 @@ export function threadStartResponseToEvent(
       id: threadId as ThreadId,
       projectId,
       title: stringValue(thread.name) ?? stringValue(thread.preview) ?? null,
+      updatedAt: threadUpdatedAt(thread),
     },
   };
 }

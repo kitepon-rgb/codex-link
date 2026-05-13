@@ -62,6 +62,7 @@ export interface ThreadRef {
   id: ThreadId;
   projectId: ProjectId;
   title: string | null;
+  updatedAt?: string | null;
 }
 
 export interface TurnRef {
