@@ -156,12 +156,13 @@ Host app は、Codex app-server client として振る舞います。
    - 発動条件: socket が存在し、`connect()` が成功する。失敗時は次の経路にフォールバックし、その理由をログに出す。
 2. `codex app-server` の **stdio transport** (= 自前で `codex` を spawn する経路)
    - VS Code IPC socket が無い時の既定経路。Host プロセス内部に独立した app-server を持つので、VS Code 側拡張とは thread state を共有しない (cross-process sync は Codex CLI 自体が提供しないため)。jsonl ファイルは共通なので、再 open すれば見える。
-3. **loopback WebSocket** (`codex app-server --listen ws://127.0.0.1:PORT`) — **CLI 用 live 同期の MVP 経路**
-   - Mac Host は (1) VS Code IPC socket が無い状況で `codex app-server --listen ws://127.0.0.1:<port>` を自前で spawn し、自身は loopback WS client として接続する。
-   - **Codex CLI ユーザーは `codex tui --remote ws://127.0.0.1:<port> --remote-auth-token-env CODEX_LINK_APP_SERVER_TOKEN` で同じ app-server に接続**できる。これで CLI 側で開いた thread の turn が iPhone に live で見え、iPhone から送った turn も CLI TUI に live で反映される。
-   - port と bearer token は Mac Host 起動時にログと `~/.codex-link/host.json` (またはユーザー環境変数) に書き出し、`codex-link cli-attach` のような wrapper を提供して手入力を不要にする。
-   - **VS Code Codex 拡張** は外部 ws:// endpoint への接続 UI を現状公開していない (拡張内蔵の stdio app-server を spawn する仕様)。したがって「VS Code と CLI を**同一**の app-server で同時共有する」は VS Code 拡張側の改修を前提とし、Codex Link コード単独では実現しない。
-   - 動的選択: VS Code 起動中は (1) IPC follower 経路、未起動なら (3) loopback WS 経路。Mac Host は両者を切り替えながらどちらの場合でも live 同期を提供する。
+3. **loopback WebSocket** (`codex app-server --listen ws://127.0.0.1:<port>`) — **常時稼働、CLI 用 live 同期の MVP 経路**
+   - Mac Host は起動時に必ず `codex app-server --listen ws://127.0.0.1:0` を spawn し、stderr の listen banner (`listening on: ws://127.0.0.1:<port>`) から port を読み取り、自身は WS client として接続する (port=0 で OS から動的割当)。
+   - port と URL は `$TMPDIR/codex-link-app-server.json` に書き出す (`{ url, port, hostId, pid, startedAt }`)。終了時に削除。mode 600。
+   - **Codex CLI ユーザーは `apps/mac-host/scripts/codex-link-cli-attach.sh` を実行**するだけで、内部で上記 JSON を読んで `codex tui --remote ws://127.0.0.1:<port>` を起動する。port が再起動毎に変わっても wrapper が吸収する。
+   - loopback (127.0.0.1) bind のみなので bearer token なしで OK (`codex app-server` の挙動)。Mac 外への露出はしない。
+   - **VS Code Codex 拡張** は外部 ws:// endpoint への接続 UI を現状公開していない (拡張内蔵の stdio app-server を spawn する仕様)。したがって「VS Code と CLI を**同一**の app-server で同時共有する」は VS Code 拡張側の改修が前提で、Codex Link コード単独では実現しない。
+   - 動的選択: VS Code 起動中なら (1) IPC follower 経路で turn を投げ、未起動なら (3) loopback WS app-server (= Mac Host が自身用に接続している同じ app-server) に直接 turn を投げる。両経路とも CodexLinkEvent ストリームを iPhone へ転送する。CLI 接続は (3) の app-server に乗るので、VS Code 起動の有無に関わらず CLI が単独で iPhone と live 同期できる。
 4. **SSH port forwarding** 越しの loopback WebSocket は、上記 (3) の延長。
 5. **`codex remote-control`** は ChatGPT 側 remote-control backend への enrollment 前提なので、local Host が直接 JSON-RPC 接続する入口とは別物として扱います (現状 enrollment が 404)。
 

@@ -19,7 +19,7 @@ Codex Link は、iPhone app からユーザー自身の Mac/PC 上で動く Code
 - Relay はグローバル Host 一覧を返さない。すべての routing / listing で、現在の user の `HostAccess` を確認する。
 - Relay は自宅 LAN 上で動かす場合でも、公開されたマルチテナントサービスとして扱う。単一の共有 API token は使わず、credential は device ごとで取り消し可能、Relay は token 本体ではなく SHA-256 hash だけを保存する。
 - 共有 / 本番環境の Relay は Docker コンテナとしてデプロイする。サーバーへ Node.js アプリを直置きする経路は作らない。
-- MVP の Host 側 Codex 入口は `codex app-server` stdio。`codex remote-control` は追跡対象だが enrollment が HTTP 404 (2026-05-10 時点) のため既定入口にしない。loopback WebSocket は代替経路として検証中。Relay は unauthenticated `app-server` WebSocket を外部公開しない。
+- MVP の Host 側 Codex 入口は **loopback WebSocket app-server** (`codex app-server --listen ws://127.0.0.1:0`)。Mac Host が起動時に spawn し、自身は WS client として接続する。port は `$TMPDIR/codex-link-app-server.json` に書き出され、`apps/mac-host/scripts/codex-link-cli-attach.sh` 経由で `codex tui --remote ws://127.0.0.1:<port>` として接続することで CLI 側も同じ app-server に乗って live 同期できる。VS Code Codex 拡張が起動中は `$TMPDIR/codex-ipc/ipc-$UID.sock` の Unix domain socket に follower として接続して、拡張内蔵 app-server に turn を投げる経路を優先する (`thread-follower-start-turn` + broadcast `thread-stream-state-changed` を CodexLinkEvent に変換して iPhone へ転送)。`codex remote-control` は追跡対象だが enrollment が HTTP 404 (2026-05-10 時点) のため既定入口にしない。Relay は unauthenticated `app-server` WebSocket を外部公開しない (loopback bind のみ)。
 - MVP Relay は broker-readable: command payload は transient で保存しない、event payload は再接続用の bounded per-Host event cache だけに置く。E2E privacy は未実装なので主張しない。
 - 永続的なコード状態は GitHub を通す (branch / commit / PR / issue / docs)。別の永続化チャネルを追加しない。
 - turn が `running` の間、iPhone composer は `codex.turn.steer` を送る (ユーザーには「次のメッセージを送る」として見せる)。新規 turn を作らない。Stop / interrupt は composer 付近の固定位置に置く。

@@ -1,8 +1,11 @@
 #!/usr/bin/env node
+import { writeFileSync, unlinkSync, chmodSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import QRCode from "qrcode";
 import { loadMacHostConfig } from "./config.js";
 import { readCodexAppServerCapabilities } from "./capabilities.js";
-import { startMacHostCodexAppServer } from "./codex.js";
+import { startMacHostCodexLoopbackWebSocket } from "./codex.js";
 import { MacHostRelayClient } from "./relay-client.js";
 import { MacHostSessionRunner } from "./session.js";
 import {
@@ -30,7 +33,12 @@ const relay = new MacHostRelayClient({
     process.exit(1);
   },
 });
-const codex = await startMacHostCodexAppServer({
+const {
+  client: codex,
+  url: codexAppServerUrl,
+  port: codexAppServerPort,
+  childProcess: codexAppServerProcess,
+} = await startMacHostCodexLoopbackWebSocket({
   config,
   clientOptions: {
     onNotification: (message) => runner?.handleCodexNotification(message),
@@ -128,16 +136,51 @@ console.log(`deep link: ${deepLink}`);
 console.log("");
 console.log(await QRCode.toString(deepLink, { type: "terminal", small: true }));
 
-process.on("SIGINT", () => {
-  relay.close();
-  void codex.close();
+const runtimeInfoPath = path.join(tmpdir(), "codex-link-app-server.json");
+try {
+  writeFileSync(
+    runtimeInfoPath,
+    JSON.stringify({
+      url: codexAppServerUrl,
+      port: codexAppServerPort,
+      hostId: config.hostId,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+    }, null, 2),
+    { mode: 0o600 },
+  );
+  chmodSync(runtimeInfoPath, 0o600);
+} catch (error) {
+  console.error(`[mac-host] failed to write ${runtimeInfoPath}: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+console.log("");
+console.log("=== Codex CLI live attach ===");
+console.log(`Codex app-server is listening on ${codexAppServerUrl} (port ${codexAppServerPort}).`);
+console.log("Attach Codex CLI TUI to the same app-server for live thread sharing:");
+console.log(`  codex tui --remote ${codexAppServerUrl}`);
+console.log(`  or:  scripts/codex-link-cli-attach.sh`);
+console.log("Threads opened in either client appear live in the other, and iPhone");
+console.log("Codex Link sees the same turn stream.");
+console.log("");
+
+function shutdown(signal: NodeJS.Signals): void {
+  console.log(`[mac-host] received ${signal}; shutting down`);
+  try { unlinkSync(runtimeInfoPath); } catch {}
+  try { relay.close(); } catch {}
+  void codex.close().catch(() => {});
+  try {
+    codexAppServerProcess.kill("SIGTERM");
+    setTimeout(() => {
+      if (!codexAppServerProcess.killed) {
+        codexAppServerProcess.kill("SIGKILL");
+      }
+    }, 1500).unref();
+  } catch {}
   process.exit(0);
-});
-process.on("SIGTERM", () => {
-  relay.close();
-  void codex.close();
-  process.exit(0);
-});
+}
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 await new Promise<never>(() => {});
 
