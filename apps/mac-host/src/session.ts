@@ -239,6 +239,10 @@ export class MacHostSessionRunner {
             .filter((piece) => piece?.type === "text" && typeof piece.text === "string")
             .map((piece) => piece.text!)
             .join("")
+            // VS Code Codex panel appends a trailing newline to submitted
+            // user input; strip it so iPhone doesn't render a phantom
+            // blank line in the user bubble.
+            .replace(/\r?\n+$/, "")
         : "";
       if (userText && !this.vscodeEmittedUserText.has(turnId)) {
         this.vscodeEmittedUserText.add(turnId);
