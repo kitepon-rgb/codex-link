@@ -43,4 +43,5 @@ public enum CodexLinkUIAction: Equatable, Sendable {
     case showHostSwitcher
     case showInspector
     case unsupportedOperation(reason: String)
+    case dismissError
 }

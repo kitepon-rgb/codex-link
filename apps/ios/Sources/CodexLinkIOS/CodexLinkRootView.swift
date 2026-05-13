@@ -34,7 +34,8 @@ public struct CodexLinkRootView: View {
                     connectionState: connectionState,
                     latestError: projection.latestError,
                     select: selectHost,
-                    pair: pairHost
+                    pair: pairHost,
+                    dismissError: { onAction(.dismissError) }
                 )
             } else {
                 SessionFlow(
@@ -85,6 +86,7 @@ private struct PairFlow: View {
     let latestError: String?
     let select: (Host) -> Void
     let pair: (String) -> Void
+    let dismissError: () -> Void
 
     @State private var manualCode = ""
     @State private var showManualEntry = false
@@ -99,7 +101,8 @@ private struct PairFlow: View {
                         tint: .red,
                         icon: "exclamationmark.triangle.fill",
                         title: latestError,
-                        detail: nil
+                        detail: nil,
+                        onDismiss: dismissError
                     )
                 } else if connectionState != .connected {
                     InlineBanner(
@@ -383,7 +386,8 @@ private struct SessionFlow: View {
             if shouldShowConnectionBanner {
                 ConnectionBanner(
                     state: connectionState,
-                    latestError: projection.latestError
+                    latestError: projection.latestError,
+                    onDismissError: { onAction(.dismissError) }
                 )
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
@@ -737,13 +741,15 @@ private struct SessionTitleView: View {
 private struct ConnectionBanner: View {
     let state: CodexLinkConnectionState
     let latestError: String?
+    let onDismissError: (() -> Void)?
 
     var body: some View {
         InlineBanner(
             tint: tint,
             icon: icon,
             title: title,
-            detail: latestError
+            detail: latestError,
+            onDismiss: latestError != nil ? onDismissError : nil
         )
     }
 
@@ -1677,7 +1683,8 @@ private struct SettingsSheet: View {
                             tint: .red,
                             icon: "exclamationmark.triangle.fill",
                             title: "Latest error",
-                            detail: latestError
+                            detail: latestError,
+                            onDismiss: { onAction(.dismissError) }
                         )
                     }
 
@@ -1940,6 +1947,7 @@ private struct InlineBanner: View {
     let icon: String
     let title: String
     let detail: String?
+    var onDismiss: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -1960,6 +1968,17 @@ private struct InlineBanner: View {
                 }
             }
             Spacer(minLength: 0)
+            if let onDismiss {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss")
+            }
         }
         .padding(12)
         .background(tint.opacity(0.12))

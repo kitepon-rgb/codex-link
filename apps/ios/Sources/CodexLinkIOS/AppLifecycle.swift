@@ -164,6 +164,9 @@ public final class CodexLinkAppViewModel: ObservableObject {
         case .unsupportedOperation(let reason):
             CodexLinkAppLogger.lifecycle.error("unsupported operation: \(reason, privacy: .public)")
             recordError(reason)
+        case .dismissError:
+            lastErrorMessage = nil
+            projection.clearLatestError()
         default:
             Task { [weak self] in
                 await self?.send(action)
@@ -479,6 +482,11 @@ public final class CodexLinkAppViewModel: ObservableObject {
             if connectionState != .failed {
                 connectionState = .connected
             }
+            // Connection is healthy again — drop any stale error banner
+            // (401 / NOT_FOUND / transient disconnect) so the UI doesn't
+            // keep showing a red strip that doesn't reflect current state.
+            lastErrorMessage = nil
+            projection.clearLatestError()
             persistSelection(previousSelection: selection)
             if let projectId = selection.projectId {
                 CodexLinkAppLogger.lifecycle.info("subscription ready; refreshing thread list for project \(projectId, privacy: .public)")

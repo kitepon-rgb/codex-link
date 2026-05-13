@@ -14,6 +14,10 @@ public struct CodexLinkProjection: Equatable, Sendable {
 
     public init() {}
 
+    public mutating func clearLatestError() {
+        latestError = nil
+    }
+
     public mutating func apply(_ event: CodexLinkEvent) {
         switch event {
         case .hostOnline(let host):

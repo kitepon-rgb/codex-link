@@ -65,6 +65,8 @@ public struct CodexLinkRelayActionEncoder: Sendable {
             throw CodexLinkRelayActionEncodingError.localOnlyAction("showInspector")
         case .unsupportedOperation(let reason):
             throw CodexLinkRelayActionEncodingError.unsupportedAction(reason)
+        case .dismissError:
+            throw CodexLinkRelayActionEncodingError.localOnlyAction("dismissError")
         }
     }
 
