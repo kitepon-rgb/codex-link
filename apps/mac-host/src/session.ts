@@ -90,8 +90,26 @@ export class MacHostSessionRunner {
   private readonly pendingApprovalDecisions = new Map<string, ApprovalDecisionKind>();
   private readonly activeTurnByThread = new Map<string, string>();
   private readonly originalRequestIds = new Map<string, string | number>();
+  // turnIds we've observed via the loopback WS app-server (iPhone- or
+  // CLI-initiated turns). Broadcast-derived events for these are dropped to
+  // avoid duplicating what handleCodexNotification already streams.
+  private readonly loopbackKnownTurnIds = new Set<string>();
+  // turns we routed via VS Code IPC (`thread-follower-start-turn`). Their
+  // lifecycle (steer / interrupt) must continue through IPC because the
+  // loopback WS app-server does not know about them. We key by threadId
+  // since iPhone's steer/interrupt only carries threadId+turnId, and there
+  // is at most one active IPC-routed turn per thread at a time.
+  private readonly ipcRoutedThreads = new Set<string>();
+  // Per-conversation cached state assembled from VS Code IPC snapshot/patches.
   private readonly vscodeConversations = new Map<string, Record<string, unknown>>();
-  private readonly vscodeSentSignatures = new Map<string, Set<string>>();
+  // Turns that already existed at the moment we attached to the VS Code IPC
+  // socket; we don't replay their history into the iPhone projection.
+  private readonly vscodeBaselineTurnIds = new Map<string, Set<string>>();
+  private readonly vscodeEmittedStatus = new Map<string, "running" | "completed" | "failed">();
+  private readonly vscodeEmittedUserText = new Set<string>();
+  // turnId -> itemIndex -> chars already streamed via assistant.delta.
+  private readonly vscodeAgentTextSent = new Map<string, Map<number, number>>();
+  private readonly vscodeEmittedFinalAgentText = new Set<string>();
 
   constructor(private readonly options: MacHostSessionRunnerOptions) {
     if (options.vscodeIpc) {
@@ -102,7 +120,11 @@ export class MacHostSessionRunner {
   replaceVscodeIpc(client: VscodeIpcClient | null): void {
     this.options.vscodeIpc = client;
     this.vscodeConversations.clear();
-    this.vscodeSentSignatures.clear();
+    this.vscodeBaselineTurnIds.clear();
+    this.vscodeEmittedStatus.clear();
+    this.vscodeEmittedUserText.clear();
+    this.vscodeAgentTextSent.clear();
+    this.vscodeEmittedFinalAgentText.clear();
     if (client) {
       this.attachVscodeIpc(client);
     }
@@ -137,30 +159,48 @@ export class MacHostSessionRunner {
     if (!change) {
       return;
     }
-    let conversation = this.vscodeConversations.get(conversationId);
     if (change.type === "snapshot" && change.conversationState) {
-      conversation = structuredClone(change.conversationState);
+      const conversation = structuredClone(change.conversationState);
       this.vscodeConversations.set(conversationId, conversation);
-    } else if (change.type === "patches" && conversation && Array.isArray(change.patches)) {
-      applyVscodePatches(conversation, change.patches);
-    } else {
+      // Treat only finished (completed/failed) turns as history; in-progress
+      // turns may have been mid-stream when mac-host attached, so we must
+      // still pick up their patches and stream deltas to iPhone.
+      const baseline = new Set<string>();
+      const turns = (conversation as { turns?: unknown }).turns;
+      if (Array.isArray(turns)) {
+        for (const rawTurn of turns) {
+          const turn = (rawTurn ?? {}) as { turnId?: unknown; status?: unknown };
+          if (
+            typeof turn.turnId === "string" &&
+            (turn.status === "completed" || turn.status === "failed")
+          ) {
+            baseline.add(turn.turnId);
+          }
+        }
+      }
+      this.vscodeBaselineTurnIds.set(conversationId, baseline);
+      // Emit current state for any in-progress turns we observed in the
+      // snapshot so iPhone catches up on the turn-in-flight.
+      this.emitVscodeOriginatedTurnEvents(conversationId, conversation);
       return;
     }
-    this.emitCodexLinkEventsFromVscodeConversation(conversationId, conversation);
+    if (change.type === "patches" && Array.isArray(change.patches)) {
+      const conversation = this.vscodeConversations.get(conversationId);
+      if (!conversation) {
+        return;
+      }
+      applyVscodePatches(conversation, change.patches);
+      this.emitVscodeOriginatedTurnEvents(conversationId, conversation);
+    }
   }
 
-  private emitCodexLinkEventsFromVscodeConversation(
+  private emitVscodeOriginatedTurnEvents(
     threadId: string,
-    conversation: Record<string, unknown> | undefined,
+    conversation: Record<string, unknown>,
   ): void {
-    if (!conversation) return;
     const turns = (conversation as { turns?: unknown }).turns;
     if (!Array.isArray(turns)) return;
-    let sent = this.vscodeSentSignatures.get(threadId);
-    if (!sent) {
-      sent = new Set<string>();
-      this.vscodeSentSignatures.set(threadId, sent);
-    }
+    const baseline = this.vscodeBaselineTurnIds.get(threadId);
     for (const rawTurn of turns) {
       const turn = (rawTurn ?? {}) as {
         turnId?: string;
@@ -170,6 +210,9 @@ export class MacHostSessionRunner {
       };
       const turnId = typeof turn.turnId === "string" ? turn.turnId : null;
       if (!turnId) continue;
+      if (baseline?.has(turnId)) continue;
+      if (this.loopbackKnownTurnIds.has(turnId)) continue;
+
       const status =
         turn.status === "inProgress"
           ? "running"
@@ -178,55 +221,69 @@ export class MacHostSessionRunner {
             : turn.status === "completed"
               ? "completed"
               : null;
-      if (status) {
-        const key = `${turnId}|status|${status}`;
-        if (!sent.has(key)) {
-          sent.add(key);
-          this.sendMaybe({
-            type: "turn.status.changed",
-            threadId: threadId as ThreadId,
-            turnId: turnId as TurnId,
-            status: status as "running" | "completed" | "failed",
-          });
-          if (status === "running") {
-            this.activeTurnByThread.set(threadId, turnId);
-          }
+      if (status && this.vscodeEmittedStatus.get(turnId) !== status) {
+        this.vscodeEmittedStatus.set(turnId, status);
+        this.send({
+          type: "turn.status.changed",
+          threadId: threadId as ThreadId,
+          turnId: turnId as TurnId,
+          status,
+        });
+        if (status === "running") {
+          this.activeTurnByThread.set(threadId, turnId);
         }
       }
-      const userTexts = Array.isArray(turn.params?.input)
+
+      const userText = Array.isArray(turn.params?.input)
         ? turn.params!.input
             .filter((piece) => piece?.type === "text" && typeof piece.text === "string")
             .map((piece) => piece.text!)
-        : [];
-      const userText = userTexts.join("");
-      if (userText) {
-        const key = `${turnId}|user|${userText}`;
-        if (!sent.has(key)) {
-          sent.add(key);
-          this.sendMaybe({
-            type: "transcript.item.recorded",
-            threadId: threadId as ThreadId,
-            turnId: turnId as TurnId,
-            itemId: `${turnId}-user-0` as ItemId,
-            role: "user",
-            text: userText,
-          });
-        }
+            .join("")
+        : "";
+      if (userText && !this.vscodeEmittedUserText.has(turnId)) {
+        this.vscodeEmittedUserText.add(turnId);
+        this.send({
+          type: "transcript.item.recorded",
+          threadId: threadId as ThreadId,
+          turnId: turnId as TurnId,
+          itemId: `${turnId}-user-0` as ItemId,
+          role: "user",
+          text: userText,
+        });
+      }
+
+      let sentByItem = this.vscodeAgentTextSent.get(turnId);
+      if (!sentByItem) {
+        sentByItem = new Map<number, number>();
+        this.vscodeAgentTextSent.set(turnId, sentByItem);
       }
       const items = Array.isArray(turn.items) ? turn.items : [];
       for (let i = 0; i < items.length; i += 1) {
         const item = items[i];
-        if (item?.type === "agentMessage" && typeof item.text === "string" && item.text.length > 0) {
-          const key = `${turnId}|agent|${i}|${item.text.length}|${item.text.slice(-32)}`;
-          if (!sent.has(key)) {
-            sent.add(key);
-            this.sendMaybe({
+        if (item?.type !== "agentMessage" || typeof item.text !== "string") continue;
+        const fullText = item.text;
+        const prevLen = sentByItem.get(i) ?? 0;
+        if (fullText.length > prevLen) {
+          const delta = fullText.slice(prevLen);
+          sentByItem.set(i, fullText.length);
+          this.send({
+            type: "assistant.delta",
+            threadId: threadId as ThreadId,
+            turnId: turnId as TurnId,
+            text: delta,
+          });
+        }
+        if ((status === "completed" || status === "failed") && fullText.length > 0) {
+          const finalKey = `${turnId}|${i}`;
+          if (!this.vscodeEmittedFinalAgentText.has(finalKey)) {
+            this.vscodeEmittedFinalAgentText.add(finalKey);
+            this.send({
               type: "transcript.item.recorded",
               threadId: threadId as ThreadId,
               turnId: turnId as TurnId,
               itemId: `${turnId}-agent-${i}` as ItemId,
               role: "assistant",
-              text: item.text,
+              text: fullText,
             });
           }
         }
@@ -270,6 +327,12 @@ export class MacHostSessionRunner {
     const project = this.projectFor(command.projectId);
     const cwd = command.cwd ?? project.path;
 
+    // When VS Code Codex extension is running we route turns through its
+    // internal app-server via IPC so the panel reflects them live (the
+    // CLAUDE.md design). When the extension is absent we fall through to
+    // the loopback WS app-server so CLI TUI stays live. The broadcast path
+    // delivers per-delta events to iPhone in both modes; turnIds we own on
+    // the loopback side are tracked in loopbackKnownTurnIds for dedup.
     if (command.threadId && this.options.vscodeIpc?.isOpen) {
       try {
         const turnStartParams: Record<string, unknown> = {
@@ -284,6 +347,7 @@ export class MacHostSessionRunner {
         if (response.resultType !== "success") {
           throw new Error(response.error ?? "vscode_ipc_start_turn_failed");
         }
+        this.ipcRoutedThreads.add(command.threadId);
         const turnIdValue = (response.result as { turn?: { id?: string } } | undefined)?.turn?.id;
         if (turnIdValue) {
           this.activeTurnByThread.set(command.threadId, turnIdValue);
@@ -297,9 +361,9 @@ export class MacHostSessionRunner {
         return;
       } catch (error) {
         console.error(
-          `[mac-host] VS Code IPC start-turn failed: ${error instanceof Error ? error.message : String(error)}`,
+          `[mac-host] VS Code IPC start-turn failed; falling back to loopback WS: ${error instanceof Error ? error.message : String(error)}`,
         );
-        throw error;
+        // fall through to loopback WS path
       }
     }
 
@@ -328,23 +392,92 @@ export class MacHostSessionRunner {
     const turnEvent = turnStartResponseToEvent(turnResponse, threadId);
     if (turnEvent && turnEvent.type === "turn.status.changed") {
       this.activeTurnByThread.set(turnEvent.threadId, turnEvent.turnId);
+      this.loopbackKnownTurnIds.add(turnEvent.turnId);
     }
     this.sendMaybe(turnEvent);
   }
 
   async steerTurn(command: SteerCodexTurnCommand): Promise<void> {
-    await this.options.codex.steerTurn({
-      threadId: command.threadId,
-      expectedTurnId: command.turnId,
-      input: [{ type: "text", text: command.prompt, text_elements: [] }],
-    });
+    // Try IPC first when VS Code is running — its app-server is the
+    // probable owner of the active turn after a mac-host restart, even if
+    // we did not personally start the turn via IPC this process lifetime.
+    if (this.options.vscodeIpc?.isOpen) {
+      try {
+        const response = await this.options.vscodeIpc.request(
+          "thread-follower-steer-turn",
+          {
+            conversationId: command.threadId,
+            input: [{ type: "text", text: command.prompt, text_elements: [] }],
+          },
+          { version: 1, timeoutMs: 15000 },
+        );
+        if (response.resultType === "success") return;
+        console.error(
+          `[mac-host] IPC steer-turn failed (${response.error ?? "unknown"}); falling back to loopback WS`,
+        );
+      } catch (error) {
+        console.error(
+          `[mac-host] IPC steer-turn threw (${error instanceof Error ? error.message : String(error)}); falling back to loopback WS`,
+        );
+      }
+    }
+    try {
+      await this.options.codex.steerTurn({
+        threadId: command.threadId,
+        expectedTurnId: command.turnId,
+        input: [{ type: "text", text: command.prompt, text_elements: [] }],
+      });
+    } catch (error) {
+      // Both transports failed. iPhone is showing a "Running" turn for which
+      // no app-server has a record. Free iPhone's stuck UI by reporting the
+      // turn as failed.
+      console.error(
+        `[mac-host] both IPC and loopback steer failed (${error instanceof Error ? error.message : String(error)}); marking turn as failed for iPhone unstuck`,
+      );
+      this.send({
+        type: "turn.status.changed",
+        threadId: command.threadId,
+        turnId: command.turnId as TurnId,
+        status: "failed",
+      });
+    }
   }
 
   async interruptTurn(command: InterruptCodexTurnCommand): Promise<void> {
-    await this.options.codex.interruptTurn({
-      threadId: command.threadId,
-      turnId: command.turnId,
-    });
+    if (this.options.vscodeIpc?.isOpen) {
+      try {
+        const response = await this.options.vscodeIpc.request(
+          "thread-follower-interrupt-turn",
+          { conversationId: command.threadId },
+          { version: 1, timeoutMs: 15000 },
+        );
+        if (response.resultType === "success") return;
+        console.error(
+          `[mac-host] IPC interrupt-turn failed (${response.error ?? "unknown"}); falling back to loopback WS`,
+        );
+      } catch (error) {
+        console.error(
+          `[mac-host] IPC interrupt-turn threw (${error instanceof Error ? error.message : String(error)}); falling back to loopback WS`,
+        );
+      }
+    }
+    try {
+      await this.options.codex.interruptTurn({
+        threadId: command.threadId,
+        turnId: command.turnId,
+      });
+    } catch (error) {
+      // Free iPhone's stuck UI by reporting the turn as failed.
+      console.error(
+        `[mac-host] both IPC and loopback interrupt failed (${error instanceof Error ? error.message : String(error)}); marking turn as failed for iPhone unstuck`,
+      );
+      this.send({
+        type: "turn.status.changed",
+        threadId: command.threadId,
+        turnId: command.turnId as TurnId,
+        status: "failed",
+      });
+    }
   }
 
   resolveApproval(command: ResolveCodexApprovalCommand): void {
@@ -425,7 +558,8 @@ export class MacHostSessionRunner {
       });
       return;
     }
-    for (const event of codexNotificationToEvents(message, projectId)) {
+    const events = codexNotificationToEvents(message, projectId);
+    for (const event of events) {
       this.send(event);
     }
   }
@@ -476,6 +610,7 @@ export class MacHostSessionRunner {
     }
     if (message.method === "turn/started") {
       this.activeTurnByThread.set(threadId, turnId);
+      this.loopbackKnownTurnIds.add(turnId);
     } else if (this.activeTurnByThread.get(threadId) === turnId) {
       this.activeTurnByThread.delete(threadId);
     }
@@ -660,7 +795,10 @@ function threadIdFromResponse(response: unknown): ThreadId | null {
   return typeof threadId === "string" ? (threadId as ThreadId) : null;
 }
 
-function applyVscodePatches(target: Record<string, unknown>, patches: Array<Record<string, unknown>>): void {
+function applyVscodePatches(
+  target: Record<string, unknown>,
+  patches: Array<Record<string, unknown>>,
+): void {
   for (const patch of patches) {
     const pathRaw = (patch as { path?: unknown }).path;
     const pathParts: string[] = Array.isArray(pathRaw)

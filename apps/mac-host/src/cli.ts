@@ -46,9 +46,15 @@ const {
   },
 });
 const vscodeIpcSocketPath = defaultVscodeIpcSocketPath();
+const vscodeIpcDisabled =
+  process.env.CODEX_LINK_DISABLE_VSCODE_IPC === "1" ||
+  process.env.CODEX_LINK_DISABLE_VSCODE_IPC === "true";
 let vscodeIpc: VscodeIpcClient | null = null;
 
 async function tryConnectVscodeIpc(): Promise<VscodeIpcClient | null> {
+  if (vscodeIpcDisabled) {
+    return null;
+  }
   if (!vscodeIpcSocketAvailable(vscodeIpcSocketPath)) {
     return null;
   }
@@ -57,7 +63,7 @@ async function tryConnectVscodeIpc(): Promise<VscodeIpcClient | null> {
       clientType: "codex-link-mac-host",
       socketPath: vscodeIpcSocketPath,
       onClose: () => {
-        console.log("[mac-host] VS Code Codex IPC disconnected; will attempt reconnect when VS Code is available");
+        console.log("[mac-host] VS Code Codex IPC disconnected; will reconnect when available");
         vscodeIpc = null;
         runner?.replaceVscodeIpc(null);
       },
@@ -72,16 +78,25 @@ async function tryConnectVscodeIpc(): Promise<VscodeIpcClient | null> {
 
 vscodeIpc = await tryConnectVscodeIpc();
 if (vscodeIpc) {
-  console.log(`[mac-host] VS Code Codex IPC connected at ${vscodeIpcSocketPath}; turn forwarding will go through VS Code app-server for live sync`);
+  console.log(
+    `[mac-host] VS Code Codex IPC connected at ${vscodeIpcSocketPath}; VS Code-originated turns will mirror to iPhone via broadcast deltas (loopback WS-originated turns continue to stream via codex-events).`,
+  );
+} else if (vscodeIpcDisabled) {
+  console.log(
+    `[mac-host] VS Code Codex IPC disabled via CODEX_LINK_DISABLE_VSCODE_IPC; mac-host will route all turns through the loopback WS app-server (CLI live mode).`,
+  );
 } else {
   console.log(
-    `[mac-host] VS Code Codex IPC unavailable at ${vscodeIpcSocketPath}. Falling back to spawned stdio app-server; live sync to VS Code will activate automatically when VS Code Codex starts.`,
+    `[mac-host] VS Code Codex IPC unavailable at ${vscodeIpcSocketPath}; will attach automatically once the extension starts.`,
   );
 }
 
 runner = new MacHostSessionRunner({ config, codex, relay, vscodeIpc });
 
 const ipcSupervisor = setInterval(() => {
+  if (vscodeIpcDisabled) {
+    return;
+  }
   if (vscodeIpc && vscodeIpc.isOpen) {
     return;
   }
@@ -93,7 +108,7 @@ const ipcSupervisor = setInterval(() => {
     if (reconnected) {
       vscodeIpc = reconnected;
       runner?.replaceVscodeIpc(reconnected);
-      console.log("[mac-host] VS Code Codex IPC reconnected; live sync to VS Code resumed");
+      console.log("[mac-host] VS Code Codex IPC reconnected; VS Code-originated turns will mirror to iPhone again");
     }
   })();
 }, 5000);

@@ -123,6 +123,13 @@ export class RelayService {
     private readonly config: RelayConfig = loadRelayConfig(),
   ) {}
 
+  // Expose state for persistence (snapshot save/load). Callers must treat
+  // the returned reference as read-only at the structural level — mutating
+  // it bypasses RelayService invariants and audit recording.
+  getStateForPersistence(): RelayState {
+    return this.state;
+  }
+
   loginPlaceholder(displayName: string): User {
     const user: User = {
       id: createId<"UserId">("usr"),

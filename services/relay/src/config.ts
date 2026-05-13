@@ -8,6 +8,8 @@ export interface RelayConfig {
   maxHttpBodyBytes?: number;
   maxWebSocketPayloadBytes?: number;
   deviceCredentialTtlMs?: number;
+  statePath?: string | null;
+  stateFlushIntervalMs?: number;
 }
 
 export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
@@ -35,6 +37,13 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
       "CODEX_LINK_DEVICE_CREDENTIAL_TTL_MS",
       30 * 24 * 60 * 60 * 1000,
       60_000,
+    ),
+    statePath: env.CODEX_LINK_RELAY_STATE_PATH ?? null,
+    stateFlushIntervalMs: parseIntegerEnv(
+      env,
+      "CODEX_LINK_RELAY_STATE_FLUSH_INTERVAL_MS",
+      2_000,
+      100,
     ),
   };
 }

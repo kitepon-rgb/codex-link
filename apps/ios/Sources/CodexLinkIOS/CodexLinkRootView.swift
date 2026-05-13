@@ -597,7 +597,10 @@ private struct SessionFlow: View {
             case (nil, _?):
                 return false
             default:
-                return (first.title ?? first.id).localizedCaseInsensitiveCompare(second.title ?? second.id) == .orderedAscending
+                // Both lack updatedAt. Codex thread ids are UUIDv7-style
+                // (timestamp-prefixed), so a lexicographic descending sort
+                // puts the newest thread first.
+                return first.id > second.id
             }
         }
     }

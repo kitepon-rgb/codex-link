@@ -2,6 +2,7 @@ import type { CodexLinkEvent } from "@codex-link/protocol";
 import type { CodexAppServerClient } from "@codex-link/codex-client";
 import { describe, expect, it } from "vitest";
 import { MacHostSessionRunner, type MacHostConfig } from "../src/index.js";
+import type { VscodeIpcClient, VscodeIpcMessage } from "../src/vscode-ipc.js";
 
 describe("MacHostSessionRunner", () => {
   const config = {
@@ -239,6 +240,154 @@ describe("MacHostSessionRunner", () => {
     ]);
   });
 
+  it("ingests VS Code-originated turns from IPC broadcasts as assistant.delta and final transcript.item.recorded, ignores baseline history, and dedups against loopback-known turnIds", async () => {
+    const events: CodexLinkEvent[] = [];
+    const codex = fakeCodexClient(async () => ({}));
+    const vscodeIpc = fakeVscodeIpcClient();
+    const runner = new MacHostSessionRunner({
+      config,
+      codex,
+      relay: { sendHostEvent: (event) => events.push(event) },
+      vscodeIpc,
+    });
+
+    // Snapshot: existing turn_history is baseline (must not be replayed).
+    vscodeIpc.emit({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      params: {
+        conversationId: "thread_vs",
+        hostId: "local",
+        change: {
+          type: "snapshot",
+          conversationState: {
+            turns: [{ turnId: "turn_history", status: "completed", items: [] }],
+          },
+        },
+      },
+    });
+    expect(events).toEqual([]);
+
+    // Patches: a NEW turn appears, with growing agent text.
+    vscodeIpc.emit({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      params: {
+        conversationId: "thread_vs",
+        hostId: "local",
+        change: {
+          type: "patches",
+          patches: [
+            {
+              op: "add",
+              path: "/turns/-",
+              value: {
+                turnId: "turn_vs",
+                status: "inProgress",
+                params: { input: [{ type: "text", text: "Hello" }] },
+                items: [{ type: "agentMessage", text: "Hi" }],
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    // Agent text grows; delta should only include the new suffix.
+    vscodeIpc.emit({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      params: {
+        conversationId: "thread_vs",
+        hostId: "local",
+        change: {
+          type: "patches",
+          patches: [{ op: "replace", path: "/turns/1/items/0/text", value: "Hi there" }],
+        },
+      },
+    });
+
+    // Status flips to completed.
+    vscodeIpc.emit({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      params: {
+        conversationId: "thread_vs",
+        hostId: "local",
+        change: {
+          type: "patches",
+          patches: [{ op: "replace", path: "/turns/1/status", value: "completed" }],
+        },
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "turn.status.changed",
+        threadId: "thread_vs",
+        turnId: "turn_vs",
+        status: "running",
+      },
+      {
+        type: "transcript.item.recorded",
+        threadId: "thread_vs",
+        turnId: "turn_vs",
+        itemId: "turn_vs-user-0",
+        role: "user",
+        text: "Hello",
+      },
+      { type: "assistant.delta", threadId: "thread_vs", turnId: "turn_vs", text: "Hi" },
+      { type: "assistant.delta", threadId: "thread_vs", turnId: "turn_vs", text: " there" },
+      {
+        type: "turn.status.changed",
+        threadId: "thread_vs",
+        turnId: "turn_vs",
+        status: "completed",
+      },
+      {
+        type: "transcript.item.recorded",
+        threadId: "thread_vs",
+        turnId: "turn_vs",
+        itemId: "turn_vs-agent-0",
+        role: "assistant",
+        text: "Hi there",
+      },
+    ]);
+
+    // Loopback-known turn must be dropped from broadcast (no duplicate).
+    events.length = 0;
+    runner.handleCodexNotification({
+      method: "turn/started",
+      params: { threadId: "thread_vs", turn: { id: "turn_loopback" } },
+    });
+    // Drain the codex-events output emitted by the notification.
+    events.length = 0;
+    vscodeIpc.emit({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      params: {
+        conversationId: "thread_vs",
+        hostId: "local",
+        change: {
+          type: "patches",
+          patches: [
+            {
+              op: "add",
+              path: "/turns/-",
+              value: {
+                turnId: "turn_loopback",
+                status: "inProgress",
+                params: { input: [{ type: "text", text: "from loopback" }] },
+                items: [{ type: "agentMessage", text: "echo" }],
+              },
+            },
+          ],
+        },
+      },
+    });
+    expect(events).toEqual([]);
+  });
+
   it("restores thread, lists threads, and lists turn items through codex app-server", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const events: CodexLinkEvent[] = [];
@@ -338,4 +487,26 @@ function fakeCodexClient(
     notify: () => undefined,
     close: async () => undefined,
   };
+}
+
+interface FakeVscodeIpcClient extends VscodeIpcClient {
+  emit(message: VscodeIpcMessage): void;
+}
+
+function fakeVscodeIpcClient(): FakeVscodeIpcClient {
+  const listeners = new Set<(message: VscodeIpcMessage) => void>();
+  const stub = {
+    isOpen: true,
+    onMessage(listener: (message: VscodeIpcMessage) => void): () => void {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    emit(message: VscodeIpcMessage): void {
+      for (const listener of listeners) listener(message);
+    },
+    request: async () => ({ resultType: "success" as const, result: undefined, error: undefined }),
+    close: () => undefined,
+    open: async () => undefined,
+  };
+  return stub as unknown as FakeVscodeIpcClient;
 }

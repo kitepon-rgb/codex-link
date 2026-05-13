@@ -6,6 +6,12 @@ export {
   RelayError,
   RelayNotFoundError,
 } from "./errors.js";
+export {
+  loadRelaySnapshot,
+  saveRelaySnapshot,
+  startRelayPersistence,
+} from "./persistence.js";
+export type { RelayPersistenceController } from "./persistence.js";
 export { RelayService } from "./relay.js";
 export type {
   DeviceCredentialIssue,

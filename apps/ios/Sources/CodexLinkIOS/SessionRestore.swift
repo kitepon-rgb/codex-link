@@ -55,11 +55,24 @@ public enum CodexLinkSessionRestore {
             projectId = nil
         }
 
+        // Trust the bookmark's threadId even when projection.threads doesn't
+        // yet know about it. The Relay event cache is bounded, so on
+        // reconnect the thread.started event for an older thread may not
+        // be replayed; without this trust the iPhone would silently drop
+        // the user's last-opened thread and create a new one on next send.
+        // If the thread truly no longer exists, mac-host's resumeThread
+        // will fail loudly when the user sends, instead of silent drift.
         let threadId: String?
-        if let bookmarkedThreadId = bookmark.threadId,
-           let thread = projection.threads[bookmarkedThreadId],
-           projectId == nil || thread.projectId == projectId {
-            threadId = bookmarkedThreadId
+        if let bookmarkedThreadId = bookmark.threadId {
+            if let thread = projection.threads[bookmarkedThreadId] {
+                if projectId == nil || thread.projectId == projectId {
+                    threadId = bookmarkedThreadId
+                } else {
+                    threadId = nil
+                }
+            } else {
+                threadId = bookmarkedThreadId
+            }
         } else {
             threadId = nil
         }
