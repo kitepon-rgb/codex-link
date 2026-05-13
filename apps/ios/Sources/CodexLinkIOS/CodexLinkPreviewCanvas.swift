@@ -4,16 +4,19 @@ import SwiftUI
 struct CodexLinkPreviewCanvas: View {
     @State private var projection: CodexLinkProjection
     @State private var selection: CodexLinkSessionSelection
+    private let connectionState: CodexLinkConnectionState
 
     init(state: CodexLinkPreviewState = .approval) {
         let fixture = CodexLinkPreviewData.fixture(state: state)
         self._projection = State(initialValue: fixture.projection)
         self._selection = State(initialValue: fixture.selection)
+        self.connectionState = fixture.connectionState
     }
 
     var body: some View {
         CodexLinkRootView(
             projection: projection,
+            connectionState: connectionState,
             selection: $selection,
             onAction: handle
         )
@@ -33,7 +36,7 @@ struct CodexLinkPreviewCanvas: View {
                 selection.threadId = resolvedThreadId
             }
             selection.activeTurnId = turnId
-            projection.apply(.turnStatusChanged(turnId: turnId, status: .running))
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: turnId, status: .running))
             projection.apply(.transcriptItemRecorded(
                 threadId: resolvedThreadId,
                 turnId: turnId,
@@ -55,10 +58,10 @@ struct CodexLinkPreviewCanvas: View {
                 text: prompt
             ))
         case .interrupt(_, let turnId):
-            projection.apply(.turnStatusChanged(turnId: turnId, status: .canceled))
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: turnId, status: .canceled))
         case .approvalDecision(let requestId, let decision):
             projection.apply(.approvalResolved(requestId: requestId, decision: decision))
-            projection.apply(.turnStatusChanged(turnId: "turn_2", status: .running))
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_2", status: .running))
         case .selectHost(let hostId):
             selection.hostId = hostId
         case .selectProject(let projectId):
@@ -66,22 +69,24 @@ struct CodexLinkPreviewCanvas: View {
         case .selectThread(let projectId, let threadId), .restoreThread(let projectId, let threadId):
             selection.projectId = projectId
             selection.threadId = threadId
-        case .showHostSwitcher, .showInspector, .unsupportedOperation:
+        case .pairHost, .revokeDeviceSession, .showHostSwitcher, .showInspector, .unsupportedOperation, .dismissError:
             break
         }
     }
 }
 
-enum CodexLinkPreviewState {
+enum CodexLinkPreviewState: String {
     case hostPicker
     case running
     case approval
+    case reconnecting
     case offline
 }
 
 struct CodexLinkPreviewFixture {
     var projection: CodexLinkProjection
     var selection: CodexLinkSessionSelection
+    var connectionState: CodexLinkConnectionState
 }
 
 enum CodexLinkPreviewData {
@@ -94,16 +99,20 @@ enum CodexLinkPreviewData {
             activeTurnId: state == .hostPicker ? nil : "turn_2"
         )
 
+        let connectionState: CodexLinkConnectionState
         switch state {
         case .hostPicker:
+            connectionState = .connected
             break
         case .running:
-            projection.apply(.turnStatusChanged(turnId: "turn_2", status: .running))
+            connectionState = .connected
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_2", status: .running))
             projection.apply(.timelineItemStarted(
                 threadId: "thread_1",
                 turnId: "turn_2",
                 itemId: "timeline_1",
-                label: "pnpm test"
+                label: "pnpm test",
+                detail: nil
             ))
             projection.apply(.assistantDelta(
                 threadId: "thread_1",
@@ -111,12 +120,14 @@ enum CodexLinkPreviewData {
                 text: "テストを実行しています。"
             ))
         case .approval:
-            projection.apply(.turnStatusChanged(turnId: "turn_2", status: .waitingForApproval))
+            connectionState = .connected
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_2", status: .waitingForApproval))
             projection.apply(.timelineItemStarted(
                 threadId: "thread_1",
                 turnId: "turn_2",
                 itemId: "timeline_1",
-                label: "swift test"
+                label: "swift test",
+                detail: nil
             ))
             projection.apply(.approvalRequested(ApprovalRequest(
                 id: "approval_1",
@@ -128,13 +139,30 @@ enum CodexLinkPreviewData {
                 detail: "swift test\ncwd: ~/Developer/codex-link/apps/ios",
                 availableDecisions: [.accept, .acceptForSession, .decline]
             )))
-        case .offline:
-            projection.apply(.turnStatusChanged(turnId: "turn_2", status: .failed))
+        case .reconnecting:
+            connectionState = .reconnecting
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_2", status: .running))
             projection.apply(.timelineItemStarted(
                 threadId: "thread_1",
                 turnId: "turn_2",
                 itemId: "timeline_1",
-                label: "Relay reconnect"
+                label: "Relay event cache restore",
+                detail: nil
+            ))
+            projection.apply(.assistantDelta(
+                threadId: "thread_1",
+                turnId: "turn_2",
+                text: "接続を復元しています。"
+            ))
+        case .offline:
+            connectionState = .failed
+            projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_2", status: .failed))
+            projection.apply(.timelineItemStarted(
+                threadId: "thread_1",
+                turnId: "turn_2",
+                itemId: "timeline_1",
+                label: "Relay reconnect",
+                detail: nil
             ))
             projection.apply(.timelineItemCompleted(
                 threadId: "thread_1",
@@ -145,7 +173,11 @@ enum CodexLinkPreviewData {
             projection.apply(.errorReported(scope: "relay", message: "Host connection lost"))
         }
 
-        return CodexLinkPreviewFixture(projection: projection, selection: selection)
+        return CodexLinkPreviewFixture(
+            projection: projection,
+            selection: selection,
+            connectionState: connectionState
+        )
     }
 
     private static func baseProjection(hostStatus: HostStatus) -> CodexLinkProjection {
@@ -185,7 +217,7 @@ enum CodexLinkPreviewData {
             projectId: "project_1",
             title: "Relay reconnect test"
         )))
-        projection.apply(.turnStatusChanged(turnId: "turn_1", status: .completed))
+        projection.apply(.turnStatusChanged(threadId: "thread_1", turnId: "turn_1", status: .completed))
         projection.apply(.transcriptItemRecorded(
             threadId: "thread_1",
             turnId: "turn_1",
@@ -216,6 +248,11 @@ enum CodexLinkPreviewData {
 
 #Preview("Host Picker") {
     CodexLinkPreviewCanvas(state: .hostPicker)
+        .frame(width: 390, height: 844)
+}
+
+#Preview("Reconnecting") {
+    CodexLinkPreviewCanvas(state: .reconnecting)
         .frame(width: 390, height: 844)
 }
 

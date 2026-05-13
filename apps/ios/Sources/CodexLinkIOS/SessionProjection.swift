@@ -9,9 +9,14 @@ public struct CodexLinkProjection: Equatable, Sendable {
     public private(set) var timeline: [TimelineItem] = []
     public private(set) var approvals: [ApprovalRequest] = []
     public private(set) var finalResponses: [String: String] = [:]
+    public private(set) var diagnostics: [DiagnosticEvent] = []
     public private(set) var latestError: String?
 
     public init() {}
+
+    public mutating func clearLatestError() {
+        latestError = nil
+    }
 
     public mutating func apply(_ event: CodexLinkEvent) {
         switch event {
@@ -21,11 +26,16 @@ public struct CodexLinkProjection: Equatable, Sendable {
             hosts[hostId]?.status = .offline
         case .hostCapabilitiesUpdated:
             break
+        case .hostAccountUpdated(let hostId, let account):
+            hosts[hostId]?.chatgptAccount = account
         case .projectListUpdated(let hostId, let projects):
             projectsByHost[hostId] = projects
         case .threadStarted(let thread):
             threads[thread.id] = thread
-        case .turnStatusChanged(let turnId, let status):
+            if let latestError, latestError.contains(thread.id) {
+                self.latestError = nil
+            }
+        case .turnStatusChanged(_, let turnId, let status):
             turnStatus[turnId] = status
         case .assistantDelta(let threadId, let turnId, let text):
             appendAssistantDelta(threadId: threadId, turnId: turnId, text: text)
@@ -35,9 +45,19 @@ public struct CodexLinkProjection: Equatable, Sendable {
             recordTranscriptItem(
                 TranscriptItem(id: itemId, threadId: threadId, turnId: turnId, role: role, text: text)
             )
-        case .timelineItemStarted(let threadId, let turnId, let itemId, let label):
+            if let latestError, latestError.contains(threadId) {
+                self.latestError = nil
+            }
+        case .timelineItemStarted(let threadId, let turnId, let itemId, let label, let detail):
             upsertTimelineItem(
-                TimelineItem(id: itemId, threadId: threadId, turnId: turnId, label: label, status: .running)
+                TimelineItem(
+                    id: itemId,
+                    threadId: threadId,
+                    turnId: turnId,
+                    label: label,
+                    status: .running,
+                    detail: detail
+                )
             )
         case .timelineItemCompleted(_, _, let itemId, let status):
             if let index = timeline.firstIndex(where: { $0.id == itemId }) {
@@ -52,7 +72,15 @@ public struct CodexLinkProjection: Equatable, Sendable {
             approvals.removeAll { $0.id == requestId }
         case .rateLimitUpdated:
             break
+        case .diagnosticReported(let diagnostic):
+            diagnostics.append(diagnostic)
         case .errorReported(_, let message):
+            if message.hasPrefix("thread not found") {
+                let threadId = message.split(separator: ":").last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+                if !threadId.isEmpty, threads[threadId] != nil {
+                    return
+                }
+            }
             latestError = message
         }
     }
@@ -90,6 +118,21 @@ public struct CodexLinkProjection: Equatable, Sendable {
     private mutating func recordTranscriptItem(_ item: TranscriptItem) {
         if let index = transcript.firstIndex(where: { $0.id == item.id }) {
             transcript[index] = item
+            return
+        }
+        if item.role == .assistant,
+           let deltaIndex = transcript.firstIndex(where: {
+               $0.id == "assistant-delta-\(item.turnId)"
+           }) {
+            transcript[deltaIndex] = item
+            return
+        }
+        if transcript.contains(where: {
+            $0.threadId == item.threadId &&
+            $0.turnId == item.turnId &&
+            $0.role == item.role &&
+            $0.text == item.text
+        }) {
             return
         }
         transcript.append(item)

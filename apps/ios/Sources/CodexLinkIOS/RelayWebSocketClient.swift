@@ -5,40 +5,92 @@ public enum CodexLinkRelayClientError: Error, Equatable, Sendable {
     case localOnlyAction(String)
     case unsupportedAction(String)
     case unsupportedWebSocketMessage
+    case relayError(code: String, message: String)
+    case subscriptionHostMismatch(expected: String, actual: String)
 }
 
-public final class CodexLinkRelayWebSocketClient {
+public struct CodexLinkWebSocketRestoreResult: Equatable, Sendable {
+    public var projection: CodexLinkProjection
+    public var selection: CodexLinkSessionSelection
+    public var bookmark: CodexLinkSessionBookmark
+
+    public init(
+        projection: CodexLinkProjection,
+        selection: CodexLinkSessionSelection,
+        bookmark: CodexLinkSessionBookmark
+    ) {
+        self.projection = projection
+        self.selection = selection
+        self.bookmark = bookmark
+    }
+}
+
+public final class CodexLinkRelayWebSocketClient: @unchecked Sendable {
     private let relayURL: URL
     private let userId: String
     private let deviceId: String
+    private let deviceToken: String
     private let session: URLSession
     private let actionEncoder: CodexLinkRelayActionEncoder
     private var task: URLSessionWebSocketTask?
+    private var keepAliveTask: Task<Void, Never>?
 
     public init(
         relayURL: URL,
         userId: String,
         deviceId: String,
+        deviceToken: String,
         session: URLSession = .shared,
         actionEncoder: CodexLinkRelayActionEncoder = CodexLinkRelayActionEncoder()
     ) {
         self.relayURL = relayURL
         self.userId = userId
         self.deviceId = deviceId
+        self.deviceToken = deviceToken
         self.session = session
         self.actionEncoder = actionEncoder
     }
 
     public func connect() throws {
         let url = try clientWebSocketURL()
-        let task = session.webSocketTask(with: url)
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "authorization")
+        let task = session.webSocketTask(with: request)
         self.task = task
         task.resume()
+        startKeepAlive(for: task)
     }
 
     public func disconnect() {
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
+    }
+
+    private func startKeepAlive(for task: URLSessionWebSocketTask) {
+        keepAliveTask?.cancel()
+        keepAliveTask = Task { [weak task] in
+            while !Task.isCancelled, let task, task.state == .running {
+                do {
+                    try await Task.sleep(nanoseconds: 20 * 1_000_000_000)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, task.state == .running else {
+                    return
+                }
+                let succeeded = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                    task.sendPing { error in
+                        continuation.resume(returning: error == nil)
+                    }
+                }
+                if !succeeded {
+                    task.cancel(with: .abnormalClosure, reason: nil)
+                    return
+                }
+            }
+        }
     }
 
     public func send(_ action: CodexLinkUIAction, currentHostId: String?, afterSequence: Int? = nil) async throws {
@@ -58,6 +110,74 @@ public final class CodexLinkRelayWebSocketClient {
 
     public func send(_ data: Data) async throws {
         try await requireTask().send(.data(data))
+    }
+
+    public func subscribeHost(hostId: String, afterSequence: Int? = nil) async throws {
+        let data = try actionEncoder.encode(
+            .selectHost(hostId: hostId),
+            currentHostId: hostId,
+            afterSequence: afterSequence
+        )
+        try await send(data)
+    }
+
+    public func restoreVisibleSession(
+        from bookmark: CodexLinkSessionBookmark,
+        startingProjection: CodexLinkProjection = CodexLinkProjection()
+    ) async throws -> CodexLinkWebSocketRestoreResult {
+        guard let hostId = bookmark.hostId else {
+            let selection = CodexLinkSessionRestore.selection(
+                from: bookmark,
+                projection: startingProjection
+            )
+            return CodexLinkWebSocketRestoreResult(
+                projection: startingProjection,
+                selection: selection,
+                bookmark: bookmark
+            )
+        }
+
+        try await subscribeHost(hostId: hostId, afterSequence: nil)
+
+        var projection = startingProjection
+        var restoredBookmark = bookmark
+        while true {
+            let message = try await receive()
+            switch message {
+            case .ready:
+                continue
+            case .hostEvent(let cached):
+                projection.apply(cached.event)
+                restoredBookmark.lastRelaySequence = max(
+                    restoredBookmark.lastRelaySequence ?? 0,
+                    cached.sequence
+                )
+            case .hostSubscriptionReady(let readyHostId, _, let latestSequence):
+                guard readyHostId == hostId else {
+                    throw CodexLinkRelayClientError.subscriptionHostMismatch(
+                        expected: hostId,
+                        actual: readyHostId
+                    )
+                }
+                restoredBookmark.lastRelaySequence = max(
+                    restoredBookmark.lastRelaySequence ?? 0,
+                    latestSequence
+                )
+                let selection = CodexLinkSessionRestore.selection(
+                    from: restoredBookmark,
+                    projection: projection
+                )
+                return CodexLinkWebSocketRestoreResult(
+                    projection: projection,
+                    selection: selection,
+                    bookmark: restoredBookmark
+                )
+            case .error(let code, let message):
+                throw CodexLinkRelayClientError.relayError(code: code, message: message)
+            case .hostMessage:
+                throw CodexLinkRelayClientError.unsupportedWebSocketMessage
+            }
+        }
     }
 
     public func receive() async throws -> RelayServerMessage {

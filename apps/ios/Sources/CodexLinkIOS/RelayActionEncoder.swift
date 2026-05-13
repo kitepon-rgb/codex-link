@@ -19,6 +19,10 @@ public struct CodexLinkRelayActionEncoder: Sendable {
         afterSequence: Int? = nil
     ) throws -> Data {
         switch action {
+        case .pairHost:
+            throw CodexLinkRelayActionEncodingError.localOnlyAction("pairHost")
+        case .revokeDeviceSession:
+            throw CodexLinkRelayActionEncodingError.localOnlyAction("revokeDeviceSession")
         case .selectHost(let hostId):
             return try encoder.encode(ClientSubscribeHostMessage(
                 hostId: hostId,
@@ -61,6 +65,8 @@ public struct CodexLinkRelayActionEncoder: Sendable {
             throw CodexLinkRelayActionEncodingError.localOnlyAction("showInspector")
         case .unsupportedOperation(let reason):
             throw CodexLinkRelayActionEncodingError.unsupportedAction(reason)
+        case .dismissError:
+            throw CodexLinkRelayActionEncodingError.localOnlyAction("dismissError")
         }
     }
 

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
+import { WebSocket, type RawData } from "ws";
 
 export type JsonRpcId = number | string;
 
@@ -60,6 +61,7 @@ export interface CodexAppServerClient {
   initialize(): Promise<unknown>;
   request(method: string, params?: unknown): Promise<unknown>;
   startThread(params: unknown): Promise<unknown>;
+  resumeThread(params: unknown): Promise<unknown>;
   startTurn(params: unknown): Promise<unknown>;
   steerTurn(params: unknown): Promise<unknown>;
   interruptTurn(params: unknown): Promise<unknown>;
@@ -149,6 +151,10 @@ export class CodexAppServerStdioClient implements CodexAppServerClient {
 
   startThread(params: unknown): Promise<unknown> {
     return this.request("thread/start", params);
+  }
+
+  resumeThread(params: unknown): Promise<unknown> {
+    return this.request("thread/resume", params);
   }
 
   startTurn(params: unknown): Promise<unknown> {
@@ -259,6 +265,174 @@ export async function createCodexAppServerClient(
   options: CodexAppServerClientOptions = {},
 ): Promise<CodexAppServerClient> {
   const client = new CodexAppServerStdioClient(options);
+  await client.start();
+  return client;
+}
+
+export interface CodexAppServerWebSocketClientOptions {
+  url: string;
+  bearerToken?: string | undefined;
+  clientInfo?: CodexAppServerClientOptions["clientInfo"];
+  experimentalApi?: boolean | undefined;
+  onNotification?: (message: JsonRpcNotification) => void;
+  onServerRequest?: (message: JsonRpcServerRequest) => void;
+}
+
+export class CodexAppServerWebSocketClient implements CodexAppServerClient {
+  private ws: WebSocket | null = null;
+  private nextId = 1;
+  private readonly pending = new Map<JsonRpcId, PendingRequest>();
+
+  constructor(private readonly options: CodexAppServerWebSocketClientOptions) {}
+
+  start(): Promise<void> {
+    if (this.ws) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const headers: Record<string, string> = {};
+      if (this.options.bearerToken) {
+        headers.authorization = `Bearer ${this.options.bearerToken}`;
+      }
+      const ws = new WebSocket(this.options.url, { headers });
+      this.ws = ws;
+      const onOpenError = (error: Error) => {
+        ws.off("open", onOpen);
+        reject(error);
+      };
+      const onOpen = () => {
+        ws.off("error", onOpenError);
+        ws.on("error", (error) => {
+          this.rejectAll(error instanceof Error ? error : new Error(String(error)));
+        });
+        ws.on("close", () => {
+          this.rejectAll(new Error("Codex app-server WS closed"));
+          this.ws = null;
+        });
+        ws.on("message", (data: RawData) => this.handleData(data));
+        resolve();
+      };
+      ws.once("open", onOpen);
+      ws.once("error", onOpenError);
+    });
+  }
+
+  async initialize(): Promise<unknown> {
+    await this.start();
+    const result = await this.request("initialize", {
+      clientInfo: this.options.clientInfo ?? {
+        name: "codex_link_mac_host",
+        title: "Codex Link Mac Host",
+        version: "0.0.0",
+      },
+      capabilities: {
+        experimentalApi: this.options.experimentalApi ?? true,
+      },
+    });
+    this.notify("initialized", {});
+    return result;
+  }
+
+  request(method: string, params?: unknown): Promise<unknown> {
+    const id = this.nextId++;
+    const message: JsonRpcRequest = { id, method };
+    if (params !== undefined) {
+      message.params = params;
+    }
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      try {
+        this.write(message);
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  startThread(params: unknown): Promise<unknown> { return this.request("thread/start", params); }
+  resumeThread(params: unknown): Promise<unknown> { return this.request("thread/resume", params); }
+  startTurn(params: unknown): Promise<unknown> { return this.request("turn/start", params); }
+  steerTurn(params: unknown): Promise<unknown> { return this.request("turn/steer", params); }
+  interruptTurn(params: unknown): Promise<unknown> { return this.request("turn/interrupt", params); }
+  listModels(params?: unknown): Promise<unknown> { return this.request("model/list", params); }
+  listExperimentalFeatures(params?: unknown): Promise<unknown> { return this.request("experimentalFeature/list", params); }
+  readConfig(params: unknown): Promise<unknown> { return this.request("config/read", params); }
+  listThreads(params?: unknown): Promise<unknown> { return this.request("thread/list", params); }
+  readThread(params: unknown): Promise<unknown> { return this.request("thread/read", params); }
+  listThreadTurns(params: unknown): Promise<unknown> { return this.request("thread/turns/list", params); }
+
+  respondToServerRequest(id: JsonRpcId, result: unknown): void {
+    this.write({ id, result });
+  }
+
+  notify(method: string, params?: unknown): void {
+    const message: JsonRpcNotification = { method };
+    if (params !== undefined) {
+      message.params = params;
+    }
+    this.write(message);
+  }
+
+  close(): Promise<void> {
+    const ws = this.ws;
+    if (!ws) return Promise.resolve();
+    return new Promise((resolve) => {
+      ws.once("close", () => resolve());
+      try { ws.close(); } catch { resolve(); }
+    });
+  }
+
+  private write(message: JsonRpcRequest | JsonRpcNotification | JsonRpcSuccess): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("Codex app-server WS is not open");
+    }
+    this.ws.send(JSON.stringify(message));
+  }
+
+  private handleData(data: RawData): void {
+    let text: string;
+    if (typeof data === "string") {
+      text = data;
+    } else if (Array.isArray(data)) {
+      text = Buffer.concat(data).toString("utf8");
+    } else {
+      text = (data as Buffer).toString("utf8");
+    }
+    let message: JsonRpcIncomingMessage;
+    try {
+      message = JSON.parse(text) as JsonRpcIncomingMessage;
+    } catch {
+      return;
+    }
+    if ("id" in message && "method" in message) {
+      this.options.onServerRequest?.(message);
+      return;
+    }
+    if ("id" in message) {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      if ("error" in message) {
+        pending.reject(new Error(message.error.message));
+        return;
+      }
+      pending.resolve(message.result);
+      return;
+    }
+    this.options.onNotification?.(message);
+  }
+
+  private rejectAll(error: Error): void {
+    for (const pending of this.pending.values()) {
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+}
+
+export async function createCodexAppServerWebSocketClient(
+  options: CodexAppServerWebSocketClientOptions,
+): Promise<CodexAppServerClient> {
+  const client = new CodexAppServerWebSocketClient(options);
   await client.start();
   return client;
 }

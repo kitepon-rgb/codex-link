@@ -7,6 +7,7 @@ public struct Host: Codable, Equatable, Identifiable, Sendable {
     public let name: String
     public let platform: String
     public var status: HostStatus
+    public var chatgptAccount: HostChatGptAccount?
 
     public init(
         id: String,
@@ -14,7 +15,8 @@ public struct Host: Codable, Equatable, Identifiable, Sendable {
         deviceId: String,
         name: String,
         platform: String,
-        status: HostStatus
+        status: HostStatus,
+        chatgptAccount: HostChatGptAccount? = nil
     ) {
         self.id = id
         self.ownerUserId = ownerUserId
@@ -22,6 +24,17 @@ public struct Host: Codable, Equatable, Identifiable, Sendable {
         self.name = name
         self.platform = platform
         self.status = status
+        self.chatgptAccount = chatgptAccount
+    }
+}
+
+public struct HostChatGptAccount: Codable, Equatable, Sendable {
+    public let email: String
+    public let planType: String?
+
+    public init(email: String, planType: String? = nil) {
+        self.email = email
+        self.planType = planType
     }
 }
 
@@ -48,15 +61,17 @@ public struct ThreadRef: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let projectId: String
     public let title: String?
+    public let updatedAt: String?
 
-    public init(id: String, projectId: String, title: String?) {
+    public init(id: String, projectId: String, title: String?, updatedAt: String? = nil) {
         self.id = id
         self.projectId = projectId
         self.title = title
+        self.updatedAt = updatedAt
     }
 }
 
-public enum TurnStatus: String, Codable, Equatable, Sendable {
+public enum TurnStatus: String, Codable, Equatable, Hashable, Sendable {
     case idle
     case running
     case waitingForApproval = "waiting_for_approval"
@@ -137,19 +152,22 @@ public struct TimelineItem: Equatable, Identifiable, Sendable {
     public let turnId: String
     public var label: String
     public var status: TimelineStatus
+    public var detail: String?
 
     public init(
         id: String,
         threadId: String,
         turnId: String,
         label: String,
-        status: TimelineStatus
+        status: TimelineStatus,
+        detail: String? = nil
     ) {
         self.id = id
         self.threadId = threadId
         self.turnId = turnId
         self.label = label
         self.status = status
+        self.detail = detail
     }
 }
 
@@ -179,5 +197,24 @@ public struct LiveActivityState: Equatable, Sendable {
         self.status = status
         self.latestText = latestText
         self.approvalRequired = approvalRequired
+    }
+}
+
+public enum DiagnosticSeverity: String, Codable, Equatable, Sendable {
+    case info
+    case warning
+    case error
+}
+
+public struct DiagnosticEvent: Codable, Equatable, Identifiable, Sendable {
+    public var id: String { "\(scope)-\(severity.rawValue)-\(message)" }
+    public let scope: String
+    public let severity: DiagnosticSeverity
+    public let message: String
+
+    public init(scope: String, severity: DiagnosticSeverity, message: String) {
+        self.scope = scope
+        self.severity = severity
+        self.message = message
     }
 }

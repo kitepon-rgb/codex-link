@@ -11,6 +11,7 @@ public enum RelayServerMessage: Equatable, Sendable {
     case ready(role: String, connectionId: String)
     case error(code: String, message: String)
     case hostEvent(CachedRelayEvent)
+    case hostSubscriptionReady(hostId: String, afterSequence: Int, latestSequence: Int)
     case hostMessage(payload: Data)
 }
 
@@ -22,6 +23,9 @@ extension RelayServerMessage: Decodable {
         case code
         case message
         case event
+        case hostId
+        case afterSequence
+        case latestSequence
     }
 
     public init(from decoder: Decoder) throws {
@@ -40,6 +44,12 @@ extension RelayServerMessage: Decodable {
             )
         case "host.event":
             self = .hostEvent(try container.decode(CachedRelayEvent.self, forKey: .event))
+        case "host.subscription.ready":
+            self = .hostSubscriptionReady(
+                hostId: try container.decode(String.self, forKey: .hostId),
+                afterSequence: try container.decode(Int.self, forKey: .afterSequence),
+                latestSequence: try container.decode(Int.self, forKey: .latestSequence)
+            )
         case "host.message":
             self = .hostMessage(payload: Data())
         default:
@@ -56,9 +66,10 @@ public enum CodexLinkEvent: Equatable, Sendable {
     case hostOnline(Host)
     case hostOffline(hostId: String)
     case hostCapabilitiesUpdated(hostId: String)
+    case hostAccountUpdated(hostId: String, account: HostChatGptAccount?)
     case projectListUpdated(hostId: String, projects: [ProjectRef])
     case threadStarted(ThreadRef)
-    case turnStatusChanged(turnId: String, status: TurnStatus)
+    case turnStatusChanged(threadId: String?, turnId: String, status: TurnStatus)
     case assistantDelta(threadId: String, turnId: String, text: String)
     case assistantFinal(threadId: String, turnId: String, itemId: String, text: String)
     case transcriptItemRecorded(
@@ -68,7 +79,13 @@ public enum CodexLinkEvent: Equatable, Sendable {
         role: TranscriptRole,
         text: String
     )
-    case timelineItemStarted(threadId: String, turnId: String, itemId: String, label: String)
+    case timelineItemStarted(
+        threadId: String,
+        turnId: String,
+        itemId: String,
+        label: String,
+        detail: String?
+    )
     case timelineItemCompleted(
         threadId: String,
         turnId: String,
@@ -76,8 +93,9 @@ public enum CodexLinkEvent: Equatable, Sendable {
         status: TimelineStatus
     )
     case approvalRequested(ApprovalRequest)
-    case approvalResolved(requestId: String, decision: ApprovalDecisionKind)
+    case approvalResolved(requestId: String, decision: ApprovalDecisionKind?)
     case rateLimitUpdated
+    case diagnosticReported(DiagnosticEvent)
     case errorReported(scope: String, message: String)
 }
 
@@ -87,6 +105,7 @@ extension CodexLinkEvent: Codable {
         case host
         case hostId
         case capabilities
+        case account
         case projects
         case thread
         case turnId
@@ -95,10 +114,12 @@ extension CodexLinkEvent: Codable {
         case text
         case itemId
         case label
+        case detail
         case role
         case request
         case requestId
         case decision
+        case diagnostic
         case scope
         case message
     }
@@ -113,6 +134,11 @@ extension CodexLinkEvent: Codable {
             self = .hostOffline(hostId: try container.decode(String.self, forKey: .hostId))
         case "host.capabilities.updated":
             self = .hostCapabilitiesUpdated(hostId: try container.decode(String.self, forKey: .hostId))
+        case "host.account.updated":
+            self = .hostAccountUpdated(
+                hostId: try container.decode(String.self, forKey: .hostId),
+                account: try container.decodeIfPresent(HostChatGptAccount.self, forKey: .account)
+            )
         case "project.list.updated":
             self = .projectListUpdated(
                 hostId: try container.decode(String.self, forKey: .hostId),
@@ -122,6 +148,7 @@ extension CodexLinkEvent: Codable {
             self = .threadStarted(try container.decode(ThreadRef.self, forKey: .thread))
         case "turn.status.changed":
             self = .turnStatusChanged(
+                threadId: try container.decodeIfPresent(String.self, forKey: .threadId),
                 turnId: try container.decode(String.self, forKey: .turnId),
                 status: try container.decode(TurnStatus.self, forKey: .status)
             )
@@ -151,7 +178,8 @@ extension CodexLinkEvent: Codable {
                 threadId: try container.decode(String.self, forKey: .threadId),
                 turnId: try container.decode(String.self, forKey: .turnId),
                 itemId: try container.decode(String.self, forKey: .itemId),
-                label: try container.decode(String.self, forKey: .label)
+                label: try container.decode(String.self, forKey: .label),
+                detail: try container.decodeIfPresent(String.self, forKey: .detail)
             )
         case "timeline.item.completed":
             self = .timelineItemCompleted(
@@ -165,10 +193,14 @@ extension CodexLinkEvent: Codable {
         case "approval.resolved":
             self = .approvalResolved(
                 requestId: try container.decode(String.self, forKey: .requestId),
-                decision: try container.decode(ApprovalDecisionKind.self, forKey: .decision)
+                decision: try container.decodeIfPresent(ApprovalDecisionKind.self, forKey: .decision)
             )
         case "rate_limit.updated":
             self = .rateLimitUpdated
+        case "diagnostic.reported":
+            self = .diagnosticReported(
+                try container.decode(DiagnosticEvent.self, forKey: .diagnostic)
+            )
         case "error.reported":
             self = .errorReported(
                 scope: try container.decode(String.self, forKey: .scope),
@@ -195,6 +227,10 @@ extension CodexLinkEvent: Codable {
         case .hostCapabilitiesUpdated(let hostId):
             try container.encode("host.capabilities.updated", forKey: .type)
             try container.encode(hostId, forKey: .hostId)
+        case .hostAccountUpdated(let hostId, let account):
+            try container.encode("host.account.updated", forKey: .type)
+            try container.encode(hostId, forKey: .hostId)
+            try container.encodeIfPresent(account, forKey: .account)
         case .projectListUpdated(let hostId, let projects):
             try container.encode("project.list.updated", forKey: .type)
             try container.encode(hostId, forKey: .hostId)
@@ -202,8 +238,9 @@ extension CodexLinkEvent: Codable {
         case .threadStarted(let thread):
             try container.encode("thread.started", forKey: .type)
             try container.encode(thread, forKey: .thread)
-        case .turnStatusChanged(let turnId, let status):
+        case .turnStatusChanged(let threadId, let turnId, let status):
             try container.encode("turn.status.changed", forKey: .type)
+            try container.encodeIfPresent(threadId, forKey: .threadId)
             try container.encode(turnId, forKey: .turnId)
             try container.encode(status, forKey: .status)
         default:

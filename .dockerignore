@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/.build
+**/.swiftpm
+.git
+.claude
+.spotter
+.vscode
+tmp
+*.log

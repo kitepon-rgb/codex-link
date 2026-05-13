@@ -1,16 +1,24 @@
 export {
+  assertMacHostConfigFileMode,
   defaultMacHostConfigPath,
   loadMacHostConfig,
+  MacOSKeychainCredentialStore,
   parseMacHostConfig,
 } from "./config.js";
-export type { MacHostConfig, MacHostProjectConfig } from "./config.js";
+export type {
+  MacHostConfig,
+  MacHostCredentialStore,
+  MacHostKeychainCredentialReference,
+  MacHostProjectConfig,
+} from "./config.js";
 export { readCodexAppServerCapabilities, readMacHostCapabilities } from "./capabilities.js";
 export type { CodexAppServerCapabilities, MacHostCapabilities } from "./capabilities.js";
 export { startMacHostCodexAppServer } from "./codex.js";
 export type { StartMacHostCodexAppServerOptions } from "./codex.js";
 export { MacHostRelayClient } from "./relay-client.js";
-export type { MacHostRelayClientOptions } from "./relay-client.js";
+export type { MacHostPairingCode, MacHostRelayClientOptions } from "./relay-client.js";
 export {
+  codexDiagnosticNotificationToEvent,
   codexNotificationToEvents,
   codexServerRequestToEvent,
   threadListResponseToEvents,

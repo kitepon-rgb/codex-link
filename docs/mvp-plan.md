@@ -26,7 +26,7 @@ iPhone app
 ## 矛盾監査 2026-05-10
 
 - UI 方針: 起動直後に常に Host list を主画面にする計画は採用しない。前回の Host / Project / Thread が復元できる場合は conversation screen へ戻し、Host list は初回、切替、アクセス不能時の導線にする。
-- 認証方針: Phase 4 の Login は MVP device session / placeholder login とする。本物の multi-user authentication、device revocation、ACL sharing は Phase 7 の対象として残す。
+- 認証方針: Phase 4 の Login は MVP device session / placeholder login とする。本物の multi-user authentication は Phase 7 の対象として残し、device revocation、ACL sharing、device credential は MVP placeholder から段階的に hardening する。
 - event 方針: Codex Link event 正規化、transcript projection、timeline projection、approval projection、LiveActivityState はすでに core 実装済みとして扱う。Phase 6 は追加実装ではなく、実 UI への統合と log gap 検証を中心にする。
 - Codex 連携方針: remote connections は第一級の検証対象だが、2026-05-10 時点の MVP 入口は Mac Host outbound Relay + local `codex app-server` stdio とする。SSH 設定は remote connections 経路の検証項目であり、MVP の通常接続体験でユーザーへ要求しない。
 
@@ -68,6 +68,7 @@ iPhone app
 - `codex features list` では `remote_control` は `under development` で、既定では disabled。
 - OpenAI 公式 PR #21424 によると、`codex remote-control` は `codex --enable remote_control app-server --listen off` 相当の入口。
 - ローカル smoke では ChatGPT remote-control enrollment endpoint が HTTP 404 を返した。
+- 2026-05-11 JST の再 smoke でも同 endpoint は HTTP 404 のままだった。
 - このため、MVP の既定入口は `codex app-server` stdio とし、remote-control は追跡対象にする。
 
 2026-05-10 の schema 生成確認:
@@ -83,6 +84,14 @@ iPhone app
 - client から `{ "id": <request id>, "result": { "decision": "accept" } }` を返すと、`serverRequest/resolved` が届き、turn が `completed` になることを確認。
 - `approval-smoke.txt` の内容が `Codex Link approval OK` になることを確認。
 
+2026-05-11 の cross-source thread 可視性検証:
+
+- `node scripts/mvp-local-smoke.mjs --turn --wait-complete` で iPhone → Relay → Mac Host → `codex app-server` 経由の turn を完了まで実行すると、`~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl` に rollout file が新規作成されることを確認 (sessions 件数 24 → 25 → 26)。Codex CLI の rollout ストアが Codex Link 経由でも正本のまま使われる。
+- 作成された rollout の `session_meta.payload.source` を実測したところ、**`"vscode"`** が記録されていた (`originator: codex_link_mac_host`, `cli_version: 0.130.0`)。`scripts/codex-app-server-thread-source-probe.mjs` で `thread/list` を 3 通り (default / 明示 `["cli","vscode","exec","appServer"]` / `["appServer"]` のみ) 呼び分けたところ、いずれも cwd 配下では `vscode` 12 件、`appServer` 0 件。`env -i` で `VSCODE_*` / `TERM_PROGRAM` を strip した状態でも source は `vscode` のままだった。Codex CLI 0.130.0 は app-server 経由でも source を `appServer` ではなく `vscode` として記録する挙動になっている。
+- 結果として、iPhone 駆動 (Mac Host 経由) の thread は VSCode Codex 拡張側の default thread 一覧と同じ source bucket に入る。逆方向 (VSCode で開始した thread を iPhone で開く) は、Mac Host の `listThreads` (`apps/mac-host/src/session.ts`) で `sourceKinds: ["cli", "vscode", "exec", "appServer"]` を明示するように更新済み。
+- 上流挙動の固定化への耐性として、`sourceKinds` を明示しておけば、将来 Codex CLI が source 推定を変えて `appServer` を返すようになっても iPhone 側 thread picker に欠落しない。
+- 残作業: 実 VSCode + Codex 拡張で iPhone 駆動 thread が thread picker に出ること、および逆方向の resume 動作を目視確認する (UI 観察なのでコード側 smoke では完結しない)。
+
 ## Phase 1: リポジトリ構成
 
 - [x] app / service / package フォルダを作る。
@@ -91,6 +100,7 @@ iPhone app
 - [x] protocol sketch を追加する。
 - [x] `packages/protocol` に共有型の入口を作る。
 - [x] `packages/codex-client` に app-server client / schema 生成物の入口を作る。
+- [x] Relay の Docker container deploy 入口を作る。共有サーバーへ直置きしない。
 
 目標構成:
 
@@ -159,8 +169,12 @@ docs/
 - [x] Relay `host.event` / Codex Link event decoder を作る。
 - [x] transcript / timeline / approval / LiveActivityState projection を作る。
 - [x] Host へ送る turn / restore command encoder を作る。
-- [ ] MVP device session / placeholder login。production auth は Phase 7。
-- [ ] 起動時に前回の Host / Project / Thread を復元し、可能なら conversation screen から開始する。
+- [x] MVP device session / placeholder login。production auth は Phase 7。
+  - Relay は `/api/device-session` で placeholder iPhone device session を発行する。
+  - iPhone core は `CodexLinkDeviceSessionClient` で device session を登録できる。
+- [x] 起動時に前回の Host / Project / Thread を復元し、可能なら conversation screen から開始する。
+  - `CodexLinkStartupRestorer` が保存済み bookmark を読み、Relay cache 復元後の selection を返す。
+  - 実 app lifecycle への接続は後続の app target binding で扱う。
 - [x] 初回、切替、アクセス不能時の Host list UI。
 - [x] Host 選択 UI。
 - [x] Project / Thread drawer UI。
@@ -178,42 +192,136 @@ docs/
 - [x] thinking / running tools の詳細状態を timeline projection から status strip / timeline に表示する。
 - [x] Host picker / running / approval / offline の Preview 状態を用意する。
 - [x] reconnect 後に使う Host / Project / Thread / Relay sequence bookmark と復元ロジック。
-- [ ] reconnect 後に Relay event cache を購読し、visible session state を実 WebSocket で復元する。
+- [x] reconnect 後に Relay event cache を購読し、visible session state を実 WebSocket で復元する。
+  - Relay は `host.subscription.ready` で cache replay の完了点を明示する。
+  - iPhone client は bookmark の `lastRelaySequence` 以降を購読し、projection / selection / bookmark を更新する。
 - [x] 基本的な approval UI。
 - [x] transcript projection を表示する。
 - [x] timeline / activity projection を折りたたみ可能に表示する。
 - [x] approval request を thread / turn / item 単位で表示する。
 - [x] debug / inspector への導線を通常 UI と分ける。
+- [x] 実 iOS app target で placeholder login、startup restore、Relay WebSocket action binding を app lifecycle に接続する。
+  - `CodexLinkAppViewModel` が placeholder device session 登録、保存 bookmark からの startup restore、Relay receive loop、UI action send を接続する。
+  - `CodexLinkApp` target は `CodexLinkRootView`、Relay lifecycle、Live Activity sync、deep link を接続する。
+- [x] 新規 iPhone device session に既存 HostAccess を付与する MVP pairing flow を作る。
+  - Host WebSocket は `host.pairingCode.create` で短命かつ一回限りの pairing code を発行できる。
+  - iPhone app は Host picker から pairing code を redeem し、Relay の `/api/device-session/pair` で対象 Host への `operator` HostAccess を受け取る。
+  - 既存 `owner` HostAccess は pairing で `operator` に降格しない。
+  - redeem 後は `client.subscribeHost` で対象 Host の event cache を購読し、Host / Project / Thread 表示に入る。
+  - これは MVP placeholder pairing であり、production authentication、短命 user session、production ACL sharing は Phase 7。
 
 ## Phase 5: Live Activity MVP
 
 - [x] LiveActivityState を定義する。
-- [ ] iOS app target 側に ActivityKit attributes を定義する。
-- [ ] running turn 用に Live Activity を開始する。
-- [ ] status を更新する。
-- [ ] approval-required state を表示する。
-- [ ] completed/failed/canceled で終了する。
-- [ ] active turn へタップで戻れるようにする。
+- [x] iOS app / widget target から使う ActivityKit attributes を定義する。
+  - `CodexLinkTurnActivityAttributes` は SwiftPM module 内で iOS 条件付きにして、app target / widget extension から import する。
+- [x] running turn 用に Live Activity を開始する。
+  - `CodexLinkLiveActivityController.sync(...)` が visible selection / projection から running turn を開始する。
+- [x] status を更新する。
+  - 同じ active turn の snapshot は existing activity に update する。
+- [x] approval-required state を表示する。
+  - Activity content state と WidgetKit 表示で `approvalRequired` を強調する。
+- [x] completed/failed/canceled で終了する。
+  - terminal turn status は final content 付きで Activity を end する。
+- [x] active turn へタップで戻れるようにする。
+  - `codexlink://thread?...` deep link を生成し、Live Activity widget に `widgetURL` として渡す。
+- [x] 実 iOS app target / widget extension を追加し、`sync(...)` と `onOpenURL` を実アプリ lifecycle に接続する。
+  - `CodexLink.xcodeproj` に `CodexLinkApp` と `CodexLinkWidgets` を追加。
 
 ## Phase 6: Event-native UX 統合と検証
 
 - [x] Codex events を Codex Link events に正規化する。
 - [x] transcript projection を追加する。
 - [x] timeline projection を追加する。
-- [ ] 通常の reconnect でユーザーに見える log gap が出ないことを確認する。
-- [ ] raw logs/debug data を通常 UI にそのまま出さない。
-- [ ] reconnect state を追加する。
-- [ ] `thread/compact/start` を UI に出す条件を決める。
-- [ ] `thread/rollback` を UI に出す条件を決める。
+- [x] 通常の reconnect でユーザーに見える log gap が出ないことを確認する。
+  - Relay は `client.subscribeHost.afterSequence` から続く cached event を replay し、`host.subscription.ready.latestSequence` を返す。
+  - `afterSequence` の次 event が cache から落ちている場合は、成功扱いせず `HOST_EVENT_CACHE_GAP` を返す。iPhone app はこれを接続失敗として通常 UI に出す。
+- [x] raw logs/debug data を通常 UI にそのまま出さない。
+  - Codex `warning` / `deprecationNotice` / `mcpServer/startupStatus/updated` は `diagnostic.reported` に分離する。
+  - iPhone projection は diagnostics を transcript / timeline と別に保持する。
+- [x] reconnect state を追加する。
+  - `CodexLinkConnectionState` を UI state として定義し、status strip に接続状態を出す。
+  - Preview に reconnecting state を追加する。
+- [x] `thread/compact/start` を UI に出す条件を決める。
+  - MVP の通常 composer には manual compact ボタンを出さない。
+  - app-server が `context_compaction` / `compaction` item を通知した場合だけ、Host が `Context compaction` timeline item として投影する。
+  - manual compact 実行 UI は、Host 側 command と local smoke が追加された後、debug / inspector 側で selected thread があり active turn が running / waiting approval ではない場合に限定する。
+- [x] `thread/rollback` を UI に出す条件を決める。
+  - MVP の通常 UI には rollback 操作を出さない。
+  - 実装する場合は、`thread/rollback` の local smoke、Host command、rollback 後の `thread/read` / `thread/turns/list` 再投影が揃った後に限る。
+  - 入口は debug / inspector 側に限定し、selected thread、rollback 対象 turn 数、実行後に失われる表示範囲を明示してから実行する。
+  - 未検証の rollback / inject 挙動を、既存の conversation 操作として扱わない。
 
 ## Phase 7: Multi-user hardening
 
 - [ ] 本物の authentication。
+  - [x] MVP placeholder として、device ごとの bearer credential を発行し、Relay 側は hash / expiry だけを保存する。
+  - [x] Relay WebSocket、device session pairing / revocation、HostAccess grant / revoke を device credential で保護する。
+  - [x] device credential の TTL、期限切れ拒否、rotation API を追加する。
+  - [x] iPhone app の device session bearer token を Keychain に保存する。
+  - [x] Mac Host config の bearer credential file mode を runtime で検査し、group / others readable な config を拒否する。
+  - [x] Mac Host installer は bearer credential を macOS Keychain に保存し、`host.json` には Keychain reference だけを置く。
+  - [ ] 外部 IdP / login、短命 user session、永続 storage と結びついた production credential lifecycle。
 - [ ] device revocation。
+  - [x] MVP placeholder device session の revoke API を作り、revoked device の新規接続、pairing、既存 WebSocket message を Relay で拒否する。
+  - [x] MVP device credential と結びついた revocation API にする。
+  - [ ] production authentication と結びついた revocation。
 - [ ] Host sharing / ACL。
+  - [x] MVP placeholder として、Host owner role だけが `operator` / `viewer` HostAccess を grant / revoke できる owner-checked API を作る。
+  - [x] owner device credential と結びついた sharing API にする。
+  - [x] `viewer` は Host event 購読のみ許可し、Host command routing は `owner` / `operator` に限定する。
+  - [x] HostAccess revoke 時に対象 user の active Host subscription を解除する。
+  - [ ] production authentication と結びついた sharing UI / API。
 - [ ] audit metadata。
+  - [x] Relay 内で Host routing、HostAccess grant / denial、pairing、device registration / revocation の最小 audit metadata を記録する。
+  - [x] device credential issue / authentication denial の最小 audit metadata を記録する。
+  - [x] MVP in-memory audit metadata に保持件数上限と filter API を追加する。
+  - [ ] production storage / retention / search policy。
 - [ ] rate limits。
-- [ ] relay payloads の privacy model 決定。
+  - [x] MVP placeholder として、単一 Relay process 内の in-memory window rate limit を sensitive HTTP / WebSocket route に適用する。
+  - [x] HTTP JSON body size limit を設定可能にし、超過を `PAYLOAD_TOO_LARGE` として拒否する。
+  - [x] WebSocket message payload size limit を設定可能にする。
+  - [ ] production storage / distributed quota / user plan 別 limit。
+- [x] relay payloads の privacy model 決定。
+  - MVP は broker-readable Relay とする。Host command payload は transient routing のみで保存せず、Host event payload は bounded event cache に保存する。
+  - audit metadata には token、pairing code 本体、Host command payload、Codex prompt 本文、approval payload を残さない。
+  - E2E privacy は未実装として明示する。
+
+## Phase 8: B-1 + QR 恒久ペアリング (Phase 7 placeholder からの昇格)
+
+Phase 7 の MVP placeholder (pairing code 手入力 + per-device credential のみ) を、ユーザーが「Mac で起動 → iPhone でカメラを向ける → 完了」だけで恒久接続できる本物のペアリングに置き換える。Codex CLI が既に持っている ChatGPT OAuth 認証を信用根拠として使い、新しい IdP integration は足さない (B-1 + QR)。
+
+設計の前提:
+
+- pair の本体は **HostAccess (Relay 永続)** で、これは MVP 既に「明示 revoke まで残る」設計になっている。Phase 8 で変えるのは「pair の発行を `ChatGPT account` に紐付け、UI を QR スキャンに変える」部分。
+- iPhone は ChatGPT OAuth client にならない (公式 third-party flow が無いため)。Mac Host が `account/read` で確定した ChatGPT account を「Mac の本人確認の根拠」として Relay に登録する。iPhone はその根拠を信用する形でペア。
+- credential は Keychain に永続、TTL が来る前に iPhone が無音で rotate する。ユーザーには再 pair を求めない。
+
+進行状況 (この checkbox を更新することで TODO を兼ねる):
+
+- [x] iOS: `CodexLinkApp.entitlements` を追加し `CODE_SIGN_ENTITLEMENTS` を当てて、Simulator / 実機での Keychain access (`-34018 errSecMissingEntitlement`) を解消する。entitlements は最小 (空 dict + 必要なら `keychain-access-groups`) から。
+- [x] Mac Host: `account/read` で ChatGPT account の email / planType を取得し、Relay の Host registration / pairing code 発行時にそれを添付する。`apiKey` モードの場合は ChatGPT account 不在として扱う (=従来 placeholder 動作にフォールバック)。
+- [x] Protocol / Relay: `Host` model に `chatgptAccount` (optional) を持たせ、`HostPairingCode` にも紐付ける。`/api/device-session/pair` redeem 時に Relay が「この Host の ChatGPT account 紐付き」を audit metadata でも参照可能にする。
+- [x] Mac Host: pairing code を発行したら、CLI 出力に加えて **QR コード (ターミナル ANSI)** を端末画面に出す。QR の payload は `codexlink://pair?relayUrl=...&hostId=...&code=...&email=...` の deep link 1 本にして iPhone 1 スキャンで完結させる。
+- [x] iPhone: AVFoundation ベースの QR スキャナ (`CodexLinkPairingScannerView`) を `Pair Host` UI に追加し、読み取り結果から `client.pair(...)` を呼ぶ。手入力経路は disclosure 内に降格、通常 UI からは外す。
+- [x] iPhone: `CodexLinkAppViewModel.maybeRotateDeviceCredential` で「期限まで 7 日未満なら無音で `/api/device-credential/rotate` を呼んで Keychain を更新する」auto rotate を入れる。失敗時は次回 launch で retry、明示 error UI には出さない (true permanent 体験のため)。
+- [x] Relay: `CODEX_LINK_DEVICE_CREDENTIAL_TTL_MS` の既定値を MVP の 30 日から 90 日に伸ばす。短い既定が「恒久」体験を壊していたため。明示 revoke はそのまま即時失効が利く。
+- [x] iPhone / Mac Host: ペアの「永続性」を裏付ける end-to-end smoke を追加する。`mvp-local-smoke.mjs --rotate-keep-pair` で「pair → credential 保存 → app 再起動相当 (新規 WS 再接続) → credential rotate → pair 維持」を確認 (`tokenChanged: true, replayedEvents: 0`)。
+- [x] docs: `security-model.md` の "認証ルール" を Phase 8 完了形 (B-1 + QR + 恒久) で書き直し、placeholder と production の境界を MVP placeholder section だけに残す。
+- [x] 公開デプロイ: 自宅サーバ (192.168.1.2) 上で Caddy reverse proxy + Docker container として Relay を `https://codex-link.kitepon.dynv6.net` に公開。Mac Host は `launchd` agent (`~/Library/LaunchAgents/dev.codex-link.mac-host.plist`) として常駐し、WebSocket close 時に exit して `KeepAlive=true` で自動再起動。
+- [x] iPhone 実機検証: USB 経由で Personal Team 署名で実機 install。HTTPS 公開 URL 経由で iPhone (5G セルラー) からも到達、QR スキャン pair → "Reply with exactly OK." → "OK" 返答まで end-to-end 確認。
+- [x] iPhone 起動時 auth リカバリ: `revalidateDeviceSession` で起動時に `/api/device-credential/rotate` を試行し、HTTP 401 (Relay 再起動などで in-memory state が消えた場合) なら Keychain と bookmark をクリアして fresh register に倒す。`stale token → 永遠に Connection failed` を解消。
+- [x] iPhone cold start で全 cache replay: `restoreVisibleSession` の `subscribeHost` を `afterSequence: nil` 固定に。bookmark.lastRelaySequence は同一セッション内 reconnect でのみ使用 (cold start では projection state が空なので host.online 等を含む全イベントを再生する必要がある)。
+- [x] iPhone QR scanner 安定化: AVCaptureSession を **app プロセス共有 singleton** + 専用 serial queue (`Self.sessionQueue`) で再構成、permission async (`AVCaptureDevice.requestAccess`)、提示は `.fullScreenCover` (3 つの `.sheet` modifier 衝突回避)。
+- [x] iPhone UI 修正: Composer の TextField に keyboard toolbar `Done` を追加、ScrollView に `.scrollDismissesKeyboard(.interactively)`、SessionProjection で transcript の semantic dedup ((threadId, turnId, role, text) 一致は skip) と "thread not found" エラー抑制 (該当 thread が projection にあれば捨てる)。
+- [x] Sim 用 Keychain フォールバック: signed build 不可 (`CODE_SIGNING_ALLOWED=NO`) の Sim では `keychain-access-groups` entitlement が effective にならず `errSecMissingEntitlement (-34018)` で device session 保存できない。`#if targetEnvironment(simulator)` で UserDefaults フォールバックを追加 (Sim 検証専用、実機は Keychain)。
+
+非目標 (Phase 8 でもやらない):
+
+- Codex Link 独自の OAuth client 登録 (ChatGPT 第三者 OAuth は公開されていない、apple/google などの別 IdP も足さない)。
+- 複数 ChatGPT account の同時管理 (1 Mac Host = 1 ChatGPT account 前提)。
+- iPhone から ChatGPT login flow を直接走らせる (Mac Host の認証を信用する設計のため不要)。
+- App Store 公開対応 (Phase 9 以降)。
 
 ## MVP の非目標
 

@@ -35,9 +35,12 @@ describe("MacHostRelayClient", () => {
     const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
     const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
     const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const iphoneToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: iphone.id }).token;
+    const macToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: mac.id }).token;
     const relayUrl = await startRelay(relay, servers);
     const clientSocket = await openRelaySocket(
       `${relayUrl}/relay?kind=client&deviceId=${iphone.id}&userId=${owner.id}`,
+      iphoneToken,
     );
     await clientSocket.read();
     clientSocket.send({ type: "client.subscribeHost", hostId: host.id });
@@ -47,6 +50,7 @@ describe("MacHostRelayClient", () => {
         relayUrl,
         userId: owner.id,
         deviceId: mac.id,
+        deviceToken: macToken,
         hostId: host.id,
         hostName: "Owner MacBook",
         projects: [{ id: "project_1" as never, name: "Codex Link", path: process.cwd() }],
@@ -67,6 +71,72 @@ describe("MacHostRelayClient", () => {
         },
       },
     });
+
+    hostClient.close();
+  });
+
+  it("requests a one-time pairing code from Relay", async () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const macToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: mac.id }).token;
+    const relayUrl = await startRelay(relay, servers);
+    const hostClient = new MacHostRelayClient({
+      config: {
+        relayUrl,
+        userId: owner.id,
+        deviceId: mac.id,
+        deviceToken: macToken,
+        hostId: host.id,
+        hostName: "Owner MacBook",
+        projects: [{ id: "project_1" as never, name: "Codex Link", path: process.cwd() }],
+      } satisfies MacHostConfig,
+    });
+
+    await hostClient.connect();
+    const pairingCode = await hostClient.createPairingCode();
+
+    expect(pairingCode).toMatchObject({
+      hostId: host.id,
+    });
+    expect(pairingCode.code).toMatch(/^[A-F0-9]{4}-[A-F0-9]{4}$/);
+
+    hostClient.close();
+  });
+
+  it("rejects pairing code requests when Relay returns an error", async () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      rateLimitWindowMs: 60_000,
+      rateLimitMaxRequestsPerWindow: 1,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    const macToken = relay.issueDeviceCredential({ userId: owner.id, deviceId: mac.id }).token;
+    const relayUrl = await startRelay(relay, servers);
+    const hostClient = new MacHostRelayClient({
+      config: {
+        relayUrl,
+        userId: owner.id,
+        deviceId: mac.id,
+        deviceToken: macToken,
+        hostId: host.id,
+        hostName: "Owner MacBook",
+        projects: [{ id: "project_1" as never, name: "Codex Link", path: process.cwd() }],
+      } satisfies MacHostConfig,
+    });
+
+    await hostClient.connect();
+    await expect(hostClient.createPairingCode()).resolves.toMatchObject({
+      hostId: host.id,
+    });
+    await expect(hostClient.createPairingCode()).rejects.toThrow(
+      "Relay error RATE_LIMITED: Rate limit exceeded",
+    );
 
     hostClient.close();
   });
@@ -112,9 +182,11 @@ async function readUntilEvent(
   throw new Error(`Timed out waiting for event: ${eventType}`);
 }
 
-function openRelaySocket(url: string): Promise<TestRelaySocket> {
+function openRelaySocket(url: string, deviceToken: string): Promise<TestRelaySocket> {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(url, {
+      headers: { authorization: `Bearer ${deviceToken}` },
+    });
     const messages: unknown[] = [];
     const readers: Array<(message: unknown) => void> = [];
     socket.on("message", (raw) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { RelayAuthzError, RelayService } from "../src/index.js";
+import { createRelayState, RelayAuthnError, RelayAuthzError, RelayService } from "../src/index.js";
 import { resetIdsForTest } from "../src/id.js";
 
 describe("RelayService", () => {
@@ -32,6 +32,14 @@ describe("RelayService", () => {
     expect(() => relay.routeToHost(other.id, host.id, { type: "turn.start" })).toThrow(
       RelayAuthzError,
     );
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "host.access.denied",
+        outcome: "denied",
+        userId: other.id,
+        hostId: host.id,
+      }),
+    );
   });
 
   it("allows Host routes with HostAccess", () => {
@@ -45,6 +53,575 @@ describe("RelayService", () => {
       hostId: host.id,
       payload: { type: "turn.start" },
     });
+  });
+
+  it("does not persist routed Host command payloads in audit metadata", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    const sensitiveText = "run deploy with token sk-test-do-not-store";
+
+    expect(relay.routeToHost(owner.id, host.id, {
+      type: "turn.start",
+      text: sensitiveText,
+    }).payload).toEqual({
+      type: "turn.start",
+      text: sensitiveText,
+    });
+
+    const serializedAudit = JSON.stringify(relay.listAuditEvents());
+    expect(serializedAudit).toContain("host.route.authorized");
+    expect(serializedAudit).not.toContain(sensitiveText);
+    expect(serializedAudit).not.toContain("turn.start");
+  });
+
+  it("allows viewer HostAccess to read events but not route commands", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const viewer = relay.loginPlaceholder("viewer");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    const event = relay.appendHostEvent(host.id, { type: "host.online", host });
+    relay.grantHostAccess(host.id, viewer.id, "viewer");
+
+    expect(relay.readHostEvents(viewer.id, host.id)).toEqual([event]);
+    expect(() => relay.routeToHost(viewer.id, host.id, { type: "turn.start" })).toThrow(
+      "Host operator access is required",
+    );
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "host.route.denied",
+        outcome: "denied",
+        userId: viewer.id,
+        hostId: host.id,
+        detail: { role: "viewer" },
+      }),
+    );
+  });
+
+  it("issues hashed device credentials and authenticates active devices", () => {
+    const state = createRelayState();
+    const relay = new RelayService(state, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      deviceCredentialTtlMs: 60_000,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const issuedAt = new Date("2026-05-10T00:00:00.000Z");
+
+    const credential = relay.issueDeviceCredential({
+      userId: owner.id,
+      deviceId: iphone.id,
+      now: issuedAt,
+    });
+
+    expect(credential.token.length).toBeGreaterThan(32);
+    expect(credential.expiresAt).toBe("2026-05-10T00:01:00.000Z");
+    expect(state.deviceCredentials.get(iphone.id)?.tokenHash).toHaveLength(64);
+    expect(state.deviceCredentials.get(iphone.id)?.tokenHash).not.toBe(credential.token);
+    expect(state.deviceCredentials.get(iphone.id)?.expiresAt).toBe("2026-05-10T00:01:00.000Z");
+    expect(
+      relay.authenticateUserDevice(owner.id, iphone.id, credential.token, {
+        now: new Date("2026-05-10T00:00:59.000Z"),
+      }),
+    ).toBe(iphone);
+    expect(() =>
+      relay.authenticateUserDevice(owner.id, iphone.id, credential.token, {
+        now: new Date("2026-05-10T00:01:00.000Z"),
+      }),
+    ).toThrow("Expired device credential");
+    expect(() => relay.authenticateUserDevice(owner.id, iphone.id, null)).toThrow(
+      RelayAuthnError,
+    );
+    expect(() => relay.authenticateUserDevice(owner.id, iphone.id, "invalid")).toThrow(
+      RelayAuthnError,
+    );
+    expect(relay.listAuditEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "device.credential.issued",
+          outcome: "success",
+          userId: owner.id,
+          deviceId: iphone.id,
+        }),
+        expect.objectContaining({
+          action: "device.authentication.denied",
+          outcome: "denied",
+          userId: owner.id,
+          deviceId: iphone.id,
+          detail: {
+            reason: "expired_credential",
+            expiresAt: "2026-05-10T00:01:00.000Z",
+          },
+        }),
+        expect.objectContaining({
+          action: "device.authentication.denied",
+          outcome: "denied",
+          userId: owner.id,
+          deviceId: iphone.id,
+          detail: { reason: "invalid_credential" },
+        }),
+      ]),
+    );
+    expect(JSON.stringify(relay.listAuditEvents())).not.toContain(credential.token);
+  });
+
+  it("rotates device credentials and invalidates the previous token", () => {
+    const state = createRelayState();
+    const relay = new RelayService(state, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      deviceCredentialTtlMs: 60_000,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const first = relay.issueDeviceCredential({
+      userId: owner.id,
+      deviceId: iphone.id,
+      now: new Date("2026-05-10T00:00:00.000Z"),
+    });
+
+    const rotated = relay.rotateDeviceCredential({
+      userId: owner.id,
+      deviceId: iphone.id,
+      now: new Date("2026-05-10T00:00:30.000Z"),
+    });
+
+    expect(rotated.token).not.toBe(first.token);
+    expect(rotated.expiresAt).toBe("2026-05-10T00:01:30.000Z");
+    expect(() =>
+      relay.authenticateUserDevice(owner.id, iphone.id, first.token, {
+        now: new Date("2026-05-10T00:00:31.000Z"),
+      }),
+    ).toThrow("Invalid device credential");
+    expect(
+      relay.authenticateUserDevice(owner.id, iphone.id, rotated.token, {
+        now: new Date("2026-05-10T00:01:29.000Z"),
+      }),
+    ).toBe(iphone);
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "device.credential.rotated",
+        outcome: "success",
+        userId: owner.id,
+        deviceId: iphone.id,
+        detail: { kind: "iphone", expiresAt: "2026-05-10T00:01:30.000Z" },
+      }),
+    );
+  });
+
+  it("enforces in-memory rate limits per scope and key", () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      rateLimitWindowMs: 60_000,
+      rateLimitMaxRequestsPerWindow: 2,
+    });
+
+    expect(
+      relay.checkRateLimit({
+        scope: "test.scope",
+        key: "subject",
+        now: new Date("2026-05-10T00:00:00Z"),
+      }),
+    ).toEqual({
+      remaining: 1,
+      resetAt: "2026-05-10T00:01:00.000Z",
+    });
+    expect(
+      relay.checkRateLimit({
+        scope: "test.scope",
+        key: "subject",
+        now: new Date("2026-05-10T00:00:10Z"),
+      }),
+    ).toEqual({
+      remaining: 0,
+      resetAt: "2026-05-10T00:01:00.000Z",
+    });
+    expect(() =>
+      relay.checkRateLimit({
+        scope: "test.scope",
+        key: "subject",
+        now: new Date("2026-05-10T00:00:20Z"),
+      }),
+    ).toThrow("Rate limit exceeded");
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "rate_limit.denied",
+        outcome: "denied",
+        detail: {
+          scope: "test.scope",
+          key: "subject",
+          resetAt: "2026-05-10T00:01:00.000Z",
+        },
+      }),
+    );
+    expect(
+      relay.checkRateLimit({
+        scope: "test.scope",
+        key: "other-subject",
+        now: new Date("2026-05-10T00:00:20Z"),
+      }).remaining,
+    ).toBe(1);
+    expect(
+      relay.checkRateLimit({
+        scope: "test.scope",
+        key: "subject",
+        now: new Date("2026-05-10T00:01:01Z"),
+      }).remaining,
+    ).toBe(1);
+  });
+
+  it("bounds and filters in-memory audit metadata", () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 200,
+      hostBootstrapToken: null,
+      auditEventLimit: 3,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+
+    relay.issueDeviceCredential({ userId: owner.id, deviceId: iphone.id });
+    relay.routeToHost(owner.id, host.id, { type: "turn.start" });
+
+    expect(relay.listAuditEvents()).toHaveLength(3);
+    expect(relay.listAuditEvents().map((event) => event.action)).toEqual([
+      "host.access.granted",
+      "device.credential.issued",
+      "host.route.authorized",
+    ]);
+    expect(relay.listAuditEvents({ action: "host.route.authorized" })).toEqual([
+      expect.objectContaining({
+        action: "host.route.authorized",
+        userId: owner.id,
+        hostId: host.id,
+      }),
+    ]);
+    expect(relay.listAuditEvents({ userId: owner.id, limit: 1 })).toEqual([
+      expect.objectContaining({ action: "host.route.authorized" }),
+    ]);
+    expect(relay.listAuditEvents({ limit: 0 })).toEqual([]);
+  });
+
+  it("allows Host owners to share and revoke non-owner HostAccess", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const teammate = relay.loginPlaceholder("teammate");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+
+    const grant = relay.grantHostAccessByOwner({
+      ownerUserId: owner.id,
+      hostId: host.id,
+      targetUserId: teammate.id,
+      role: "viewer",
+    });
+
+    expect(grant.access).toEqual({
+      hostId: host.id,
+      userId: teammate.id,
+      role: "viewer",
+    });
+    expect(relay.listHostsForUser(teammate.id)).toEqual([host]);
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "host.access.shared",
+        outcome: "success",
+        userId: owner.id,
+        hostId: host.id,
+        detail: { targetUserId: teammate.id, role: "viewer" },
+      }),
+    );
+
+    const revocation = relay.revokeHostAccessByOwner({
+      ownerUserId: owner.id,
+      hostId: host.id,
+      targetUserId: teammate.id,
+    });
+
+    expect(revocation.revokedAccess.role).toBe("viewer");
+    expect(relay.listHostsForUser(teammate.id)).toEqual([]);
+    expect(() => relay.routeToHost(teammate.id, host.id, { type: "turn.start" })).toThrow(
+      RelayAuthzError,
+    );
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "host.access.revoked",
+        outcome: "success",
+        userId: owner.id,
+        hostId: host.id,
+        detail: { targetUserId: teammate.id, role: "viewer" },
+      }),
+    );
+  });
+
+  it("rejects HostAccess sharing from non-owners and owner revocation", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const operator = relay.loginPlaceholder("operator");
+    const teammate = relay.loginPlaceholder("teammate");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    relay.grantHostAccessByOwner({
+      ownerUserId: owner.id,
+      hostId: host.id,
+      targetUserId: operator.id,
+      role: "operator",
+    });
+
+    expect(() =>
+      relay.grantHostAccessByOwner({
+        ownerUserId: operator.id,
+        hostId: host.id,
+        targetUserId: teammate.id,
+        role: "viewer",
+      }),
+    ).toThrow("Host owner access is required");
+    expect(() =>
+      relay.revokeHostAccessByOwner({
+        ownerUserId: owner.id,
+        hostId: host.id,
+        targetUserId: owner.id,
+      }),
+    ).toThrow("Host owner access cannot be revoked");
+    expect(relay.listHostsForUser(owner.id)).toEqual([host]);
+    expect(relay.listAuditEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "host.access.grant.denied",
+          outcome: "denied",
+          userId: operator.id,
+          hostId: host.id,
+          detail: { role: "operator" },
+        }),
+        expect.objectContaining({
+          action: "host.access.revoke.denied",
+          outcome: "denied",
+          userId: owner.id,
+          hostId: host.id,
+          detail: { targetUserId: owner.id, reason: "owner_access" },
+        }),
+      ]),
+    );
+  });
+
+  it("grants HostAccess by redeeming a one-time Host pairing code", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const guest = relay.loginPlaceholder("guest");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const guestIphone = relay.registerDevice(guest.id, "Guest iPhone", "iphone");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    const pairingCode = relay.createHostPairingCode(host.id, {
+      now: new Date("2026-05-10T00:00:00Z"),
+      ttlMs: 60_000,
+    });
+
+    const grant = relay.redeemHostPairingCode({
+      userId: guest.id,
+      deviceId: guestIphone.id,
+      pairingCode: pairingCode.code.toLowerCase(),
+      now: new Date("2026-05-10T00:00:10Z"),
+    });
+
+    expect(grant).toMatchObject({
+      user: { id: guest.id },
+      device: { id: guestIphone.id },
+      host: { id: host.id },
+      access: { hostId: host.id, userId: guest.id, role: "operator" },
+    });
+    expect(relay.listHostsForUser(guest.id)).toEqual([host]);
+    expect(relay.listAuditEvents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "host.pairing_code.created",
+          outcome: "success",
+          hostId: host.id,
+        }),
+        expect.objectContaining({
+          action: "host.access.granted",
+          outcome: "success",
+          userId: guest.id,
+          hostId: host.id,
+          detail: { role: "operator" },
+        }),
+        expect.objectContaining({
+          action: "host.pairing_code.redeemed",
+          outcome: "success",
+          userId: guest.id,
+          deviceId: guestIphone.id,
+          hostId: host.id,
+        }),
+      ]),
+    );
+    const createdAudit = relay
+      .listAuditEvents()
+      .find((event) => event.action === "host.pairing_code.created");
+    expect(createdAudit?.detail).toEqual({
+      expiresAt: pairingCode.expiresAt,
+      chatgptEmail: null,
+    });
+    expect(JSON.stringify(createdAudit)).not.toContain(pairingCode.code);
+    expect(() =>
+      relay.redeemHostPairingCode({
+        userId: guest.id,
+        deviceId: guestIphone.id,
+        pairingCode: pairingCode.code,
+      }),
+    ).toThrow("already been used");
+  });
+
+  it("does not downgrade owner HostAccess when the owner redeems a pairing code", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const teammate = relay.loginPlaceholder("teammate");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const ownerIphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    const pairingCode = relay.createHostPairingCode(host.id, {
+      now: new Date("2026-05-10T00:00:00Z"),
+      ttlMs: 60_000,
+    });
+
+    const grant = relay.redeemHostPairingCode({
+      userId: owner.id,
+      deviceId: ownerIphone.id,
+      pairingCode: pairingCode.code,
+      now: new Date("2026-05-10T00:00:10Z"),
+    });
+
+    expect(grant.access.role).toBe("owner");
+    expect(() =>
+      relay.grantHostAccessByOwner({
+        ownerUserId: owner.id,
+        hostId: host.id,
+        targetUserId: teammate.id,
+        role: "viewer",
+      }),
+    ).not.toThrow();
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "host.access.retained",
+        outcome: "success",
+        userId: owner.id,
+        hostId: host.id,
+        detail: { role: "owner", requestedRole: "operator" },
+      }),
+    );
+  });
+
+  it("rejects expired Host pairing codes", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const guest = relay.loginPlaceholder("guest");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const guestIphone = relay.registerDevice(guest.id, "Guest iPhone", "iphone");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+    const pairingCode = relay.createHostPairingCode(host.id, {
+      now: new Date("2026-05-10T00:00:00Z"),
+      ttlMs: 60_000,
+    });
+
+    expect(() =>
+      relay.redeemHostPairingCode({
+        userId: guest.id,
+        deviceId: guestIphone.id,
+        pairingCode: pairingCode.code,
+        now: new Date("2026-05-10T00:02:00Z"),
+      }),
+    ).toThrow("expired");
+    expect(relay.listHostsForUser(guest.id)).toEqual([]);
+  });
+
+  it("revokes devices and rejects later Relay use", () => {
+    const state = createRelayState();
+    const relay = new RelayService(state);
+    const owner = relay.loginPlaceholder("owner");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+    relay.issueDeviceCredential({ userId: owner.id, deviceId: iphone.id });
+    const pairingCode = relay.createHostPairingCode(host.id, {
+      now: new Date("2026-05-10T00:00:00Z"),
+      ttlMs: 60_000,
+    });
+
+    const revocation = relay.revokeDevice({
+      userId: owner.id,
+      deviceId: iphone.id,
+      now: new Date("2026-05-10T00:00:10Z"),
+    });
+
+    expect(revocation.device.revokedAt).toBe("2026-05-10T00:00:10.000Z");
+    expect(state.deviceCredentials.get(iphone.id)).toBeUndefined();
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "device.revoked",
+        outcome: "success",
+        userId: owner.id,
+        deviceId: iphone.id,
+        detail: {
+          kind: "iphone",
+          revokedAt: "2026-05-10T00:00:10.000Z",
+        },
+      }),
+    );
+    expect(() => relay.connectClientDevice(owner.id, iphone.id)).toThrow("Revoked device");
+    expect(() =>
+      relay.redeemHostPairingCode({
+        userId: owner.id,
+        deviceId: iphone.id,
+        pairingCode: pairingCode.code,
+      }),
+    ).toThrow("Revoked device");
+  });
+
+  it("does not allow a user to revoke another user's device", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const stranger = relay.loginPlaceholder("stranger");
+    const iphone = relay.registerDevice(owner.id, "Owner iPhone", "iphone");
+
+    expect(() =>
+      relay.revokeDevice({
+        userId: stranger.id,
+        deviceId: iphone.id,
+      }),
+    ).toThrow(RelayAuthzError);
+    expect(iphone.revokedAt).toBeNull();
+    expect(relay.listAuditEvents()).toContainEqual(
+      expect.objectContaining({
+        action: "device.revocation.denied",
+        outcome: "denied",
+        userId: stranger.id,
+        deviceId: iphone.id,
+      }),
+    );
+  });
+
+  it("marks Hosts offline when their Host device is revoked", () => {
+    const relay = new RelayService();
+    const owner = relay.loginPlaceholder("owner");
+    const mac = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, mac.id, "Owner MacBook");
+
+    relay.markHostOnline(host.id);
+    relay.revokeDevice({
+      userId: owner.id,
+      deviceId: mac.id,
+      now: new Date("2026-05-10T00:00:10Z"),
+    });
+
+    expect(relay.listHostsForUser(owner.id)[0]?.status).toBe("offline");
+    expect(() => relay.connectDevice(mac.id, host.id)).toThrow("Revoked device");
   });
 
   it("keeps a bounded event cache per Host", () => {
@@ -66,6 +643,57 @@ describe("RelayService", () => {
     ]);
   });
 
+  it("rejects replay when the requested sequence has fallen out of the Host event cache", () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 2,
+      hostBootstrapToken: null,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const ownerDevice = relay.registerDevice(owner.id, "Owner Mac", "mac-host");
+    const host = relay.registerHost(owner.id, ownerDevice.id, "Owner MacBook");
+
+    const first = relay.appendHostEvent(host.id, { type: "host.online", host });
+    relay.appendHostEvent(host.id, { type: "host.offline", hostId: host.id });
+    relay.appendHostEvent(host.id, { type: "host.online", host });
+    relay.appendHostEvent(host.id, { type: "host.offline", hostId: host.id });
+
+    expect(() => relay.readHostEventReplay(owner.id, host.id, first.sequence)).toThrow(
+      "cannot replay after sequence",
+    );
+  });
+
+  it("does not treat other Hosts' global sequence numbers as a replay gap", () => {
+    const relay = new RelayService(undefined, {
+      publicBaseUrl: "http://relay.test",
+      eventCacheLimitPerHost: 1,
+      hostBootstrapToken: null,
+    });
+    const owner = relay.loginPlaceholder("owner");
+    const firstDevice = relay.registerDevice(owner.id, "First Mac", "mac-host");
+    const secondDevice = relay.registerDevice(owner.id, "Second Mac", "mac-host");
+    const firstHost = relay.registerHost(owner.id, firstDevice.id, "First MacBook");
+    const secondHost = relay.registerHost(owner.id, secondDevice.id, "Second MacBook");
+
+    const firstHostEvent = relay.appendHostEvent(firstHost.id, {
+      type: "host.online",
+      host: firstHost,
+    });
+    relay.appendHostEvent(secondHost.id, { type: "host.online", host: secondHost });
+    relay.appendHostEvent(secondHost.id, { type: "host.offline", hostId: secondHost.id });
+    const nextFirstHostEvent = relay.appendHostEvent(firstHost.id, {
+      type: "host.offline",
+      hostId: firstHost.id,
+    });
+
+    expect(
+      relay.readHostEventReplay(owner.id, firstHost.id, firstHostEvent.sequence),
+    ).toEqual({
+      events: [nextFirstHostEvent],
+      latestSequence: nextFirstHostEvent.sequence,
+    });
+  });
+
   it("registers a Host through bootstrap token", () => {
     const relay = new RelayService(undefined, {
       publicBaseUrl: "http://relay.test",
@@ -81,6 +709,10 @@ describe("RelayService", () => {
 
     expect(registration.user.displayName).toBe("owner");
     expect(registration.device.kind).toBe("mac-host");
+    expect(registration.deviceToken.length).toBeGreaterThan(32);
+    expect(relay.authenticateDevice(registration.device.id, registration.deviceToken)).toBe(
+      registration.device,
+    );
     expect(registration.host.deviceId).toBe(registration.device.id);
     expect(relay.listHostsForUser(registration.user.id)).toEqual([registration.host]);
   });

@@ -7,22 +7,45 @@ export interface MacHostRelayClientOptions {
   config: MacHostConfig;
   WebSocketImpl?: typeof WebSocket;
   onHostMessage?: (payload: unknown) => void;
+  onClose?: (code: number, reason: string) => void;
+}
+
+export interface MacHostPairingCode {
+  hostId: string;
+  code: string;
+  expiresAt: string;
+  chatgptAccount: { email: string; planType: string | null } | null;
 }
 
 export class MacHostRelayClient {
   private socket: WebSocket | null = null;
   private readonly WebSocketImpl: typeof WebSocket;
+  private pairingCodeRequest: {
+    resolve: (pairingCode: MacHostPairingCode) => void;
+    reject: (error: Error) => void;
+  } | null = null;
 
   constructor(private readonly options: MacHostRelayClientOptions) {
     this.WebSocketImpl = options.WebSocketImpl ?? WebSocket;
   }
 
   connect(): Promise<void> {
-    const socket = new this.WebSocketImpl(this.buildRelayUrl());
+    const socket = new this.WebSocketImpl(this.buildRelayUrl(), {
+      headers: {
+        authorization: `Bearer ${this.options.config.deviceToken}`,
+      },
+    });
     this.socket = socket;
     return new Promise((resolve, reject) => {
       socket.once("open", () => {
         socket.on("message", (raw) => this.handleRelayMessage(raw.toString()));
+        socket.on("error", (error) => {
+          this.rejectPairingCodeRequest(error);
+        });
+        socket.on("close", (code: number, reason: Buffer) => {
+          this.rejectPairingCodeRequest(new Error("Relay WebSocket closed"));
+          this.options.onClose?.(code, reason.toString());
+        });
         resolve();
       });
       socket.once("error", reject);
@@ -64,6 +87,19 @@ export class MacHostRelayClient {
     this.socket.send(JSON.stringify({ type: "host.event", event }));
   }
 
+  createPairingCode(): Promise<MacHostPairingCode> {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error("Relay WebSocket is not open");
+    }
+    if (this.pairingCodeRequest) {
+      throw new Error("Host pairing code request is already in flight");
+    }
+    this.socket.send(JSON.stringify({ type: "host.pairingCode.create" }));
+    return new Promise((resolve, reject) => {
+      this.pairingCodeRequest = { resolve, reject };
+    });
+  }
+
   buildRelayUrl(): string {
     const url = new URL(this.options.config.relayUrl);
     url.pathname = joinPath(url.pathname, "relay");
@@ -93,6 +129,33 @@ export class MacHostRelayClient {
       message &&
       typeof message === "object" &&
       "type" in message &&
+      message.type === "host.pairingCode.created"
+    ) {
+      const pairingCode = pairingCodeMessage(message);
+      if (pairingCode) {
+        this.resolvePairingCodeRequest(pairingCode);
+      }
+      return;
+    }
+    if (
+      message &&
+      typeof message === "object" &&
+      "type" in message &&
+      message.type === "relay.error" &&
+      "code" in message &&
+      "message" in message &&
+      typeof message.code === "string" &&
+      typeof message.message === "string"
+    ) {
+      this.rejectPairingCodeRequest(
+        new Error(`Relay error ${message.code}: ${message.message}`),
+      );
+      return;
+    }
+    if (
+      message &&
+      typeof message === "object" &&
+      "type" in message &&
       message.type === "host.message" &&
       "message" in message
     ) {
@@ -100,6 +163,47 @@ export class MacHostRelayClient {
       this.options.onHostMessage?.(routed.payload);
     }
   }
+
+  private resolvePairingCodeRequest(pairingCode: MacHostPairingCode): void {
+    const request = this.pairingCodeRequest;
+    this.pairingCodeRequest = null;
+    request?.resolve(pairingCode);
+  }
+
+  private rejectPairingCodeRequest(error: Error): void {
+    const request = this.pairingCodeRequest;
+    this.pairingCodeRequest = null;
+    request?.reject(error);
+  }
+}
+
+function pairingCodeMessage(message: object): MacHostPairingCode | null {
+  if (!("hostId" in message) || !("code" in message) || !("expiresAt" in message)) {
+    return null;
+  }
+  if (
+    typeof message.hostId !== "string" ||
+    typeof message.code !== "string" ||
+    typeof message.expiresAt !== "string"
+  ) {
+    return null;
+  }
+  let chatgptAccount: { email: string; planType: string | null } | null = null;
+  if ("chatgptAccount" in message && message.chatgptAccount && typeof message.chatgptAccount === "object") {
+    const account = message.chatgptAccount as { email?: unknown; planType?: unknown };
+    if (typeof account.email === "string") {
+      chatgptAccount = {
+        email: account.email,
+        planType: typeof account.planType === "string" ? account.planType : null,
+      };
+    }
+  }
+  return {
+    hostId: message.hostId,
+    code: message.code,
+    expiresAt: message.expiresAt,
+    chatgptAccount,
+  };
 }
 
 function joinPath(basePath: string, child: string): string {

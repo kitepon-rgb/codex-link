@@ -30,6 +30,12 @@ export interface Host {
   name: string;
   platform: "macos";
   status: "online" | "offline";
+  chatgptAccount?: HostChatGptAccount;
+}
+
+export interface HostChatGptAccount {
+  email: string;
+  planType: string | null;
 }
 
 export interface HostAccess {
@@ -56,6 +62,7 @@ export interface ThreadRef {
   id: ThreadId;
   projectId: ProjectId;
   title: string | null;
+  updatedAt?: string | null;
 }
 
 export interface TurnRef {
@@ -94,6 +101,14 @@ export type ApprovalDecisionKind =
   | "decline"
   | "cancel";
 
+export type DiagnosticSeverity = "info" | "warning" | "error";
+
+export interface DiagnosticEvent {
+  scope: "host" | "relay" | "codex";
+  severity: DiagnosticSeverity;
+  message: string;
+}
+
 export interface ApprovalDecision {
   requestId: RequestId;
   decision: ApprovalDecisionKind;
@@ -102,10 +117,11 @@ export interface ApprovalDecision {
 export type CodexLinkEvent =
   | { type: "host.online"; host: Host }
   | { type: "host.offline"; hostId: HostId }
+  | { type: "host.account.updated"; hostId: HostId; account: HostChatGptAccount | null }
   | { type: "host.capabilities.updated"; hostId: HostId; capabilities: unknown }
   | { type: "project.list.updated"; hostId: HostId; projects: ProjectRef[] }
   | { type: "thread.started"; thread: ThreadRef }
-  | { type: "turn.status.changed"; turnId: TurnId; status: TurnStatus }
+  | { type: "turn.status.changed"; threadId: ThreadId; turnId: TurnId; status: TurnStatus }
   | { type: "assistant.delta"; threadId: ThreadId; turnId: TurnId; text: string }
   | {
       type: "assistant.final";
@@ -128,6 +144,7 @@ export type CodexLinkEvent =
       turnId: TurnId;
       itemId: ItemId;
       label: string;
+      detail?: string;
     }
   | {
       type: "timeline.item.completed";
@@ -137,8 +154,9 @@ export type CodexLinkEvent =
       status: "completed" | "failed" | "declined";
     }
   | { type: "approval.requested"; request: ApprovalRequest }
-  | { type: "approval.resolved"; requestId: RequestId; decision: ApprovalDecisionKind }
+  | { type: "approval.resolved"; requestId: RequestId; decision?: ApprovalDecisionKind }
   | { type: "rate_limit.updated"; userId: UserId; usedPercent: number | null }
+  | { type: "diagnostic.reported"; diagnostic: DiagnosticEvent }
   | { type: "error.reported"; scope: "host" | "relay" | "codex"; message: string };
 
 export interface LiveActivityState {

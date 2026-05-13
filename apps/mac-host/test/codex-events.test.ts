@@ -24,7 +24,7 @@ describe("Codex app-server event normalization", () => {
     ).toEqual([
       {
         type: "thread.started",
-        thread: { id: "thread_1", projectId, title: "Hello" },
+        thread: { id: "thread_1", projectId, title: "Hello", updatedAt: null },
       },
     ]);
 
@@ -36,7 +36,14 @@ describe("Codex app-server event normalization", () => {
         },
         projectId,
       ),
-    ).toEqual([{ type: "turn.status.changed", turnId: "turn_1", status: "running" }]);
+    ).toEqual([
+      {
+        type: "turn.status.changed",
+        threadId: "thread_1",
+        turnId: "turn_1",
+        status: "running",
+      },
+    ]);
 
     expect(
       codexNotificationToEvents(
@@ -69,6 +76,32 @@ describe("Codex app-server event normalization", () => {
         turnId: "turn_1",
         itemId: "item_1",
         label: "pwd",
+      },
+    ]);
+
+    expect(
+      codexNotificationToEvents(
+        {
+          method: "item/fileChange/patchUpdated",
+          params: {
+            threadId: "thread_1",
+            turnId: "turn_1",
+            itemId: "item_file",
+            changes: [
+              { path: "README.md", kind: "update", diff: "@@\n+hello" },
+            ],
+          },
+        },
+        projectId,
+      ),
+    ).toEqual([
+      {
+        type: "timeline.item.started",
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "item_file",
+        label: "File change",
+        detail: "update: README.md\n@@\n+hello",
       },
     ]);
   });
@@ -112,6 +145,70 @@ describe("Codex app-server event normalization", () => {
     ]);
   });
 
+  it("projects context compaction as timeline activity instead of transcript text", () => {
+    expect(
+      codexNotificationToEvents(
+        {
+          method: "item/started",
+          params: {
+            threadId: "thread_1",
+            turnId: "turn_1",
+            item: { id: "item_compact", type: "context_compaction" },
+          },
+        },
+        projectId,
+      ),
+    ).toEqual([
+      {
+        type: "timeline.item.started",
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "item_compact",
+        label: "Context compaction",
+      },
+    ]);
+  });
+
+  it("separates Codex diagnostics from normal transcript and timeline events", () => {
+    expect(
+      codexNotificationToEvents(
+        {
+          method: "warning",
+          params: { message: "MCP server failed to start" },
+        },
+        projectId,
+      ),
+    ).toEqual([
+      {
+        type: "diagnostic.reported",
+        diagnostic: {
+          scope: "codex",
+          severity: "warning",
+          message: "MCP server failed to start",
+        },
+      },
+    ]);
+
+    expect(
+      codexNotificationToEvents(
+        {
+          method: "deprecationNotice",
+          params: { message: "old method" },
+        },
+        projectId,
+      ),
+    ).toEqual([
+      {
+        type: "diagnostic.reported",
+        diagnostic: {
+          scope: "codex",
+          severity: "info",
+          message: "old method",
+        },
+      },
+    ]);
+  });
+
   it("normalizes app-server responses into Codex Link events", () => {
     expect(
       threadStartResponseToEvent(
@@ -120,10 +217,16 @@ describe("Codex app-server event normalization", () => {
       ),
     ).toEqual({
       type: "thread.started",
-      thread: { id: "thread_1", projectId, title: "Thread title" },
+      thread: { id: "thread_1", projectId, title: "Thread title", updatedAt: null },
     });
-    expect(turnStartResponseToEvent({ turn: { id: "turn_1", status: "inProgress" } })).toEqual({
+    expect(
+      turnStartResponseToEvent(
+        { turn: { id: "turn_1", status: "inProgress" } },
+        "thread_1" as never,
+      ),
+    ).toEqual({
       type: "turn.status.changed",
+      threadId: "thread_1",
       turnId: "turn_1",
       status: "running",
     });
@@ -152,7 +255,12 @@ describe("Codex app-server event normalization", () => {
 
     expect(threadReadResponseToEvents({ thread }, projectId)).toMatchObject([
       { type: "thread.started", thread: { id: "thread_1", projectId, title: "Preview" } },
-      { type: "turn.status.changed", turnId: "turn_1", status: "completed" },
+      {
+        type: "turn.status.changed",
+        threadId: "thread_1",
+        turnId: "turn_1",
+        status: "completed",
+      },
       { type: "timeline.item.started", itemId: "item_user" },
       { type: "timeline.item.completed", itemId: "item_user" },
       { type: "transcript.item.recorded", itemId: "item_user", role: "user", text: "Hello" },
@@ -163,12 +271,17 @@ describe("Codex app-server event normalization", () => {
     ]);
 
     expect(threadListResponseToEvents({ data: [thread] }, projectId)).toEqual([
-      { type: "thread.started", thread: { id: "thread_1", projectId, title: "Preview" } },
+      { type: "thread.started", thread: { id: "thread_1", projectId, title: "Preview", updatedAt: null } },
     ]);
 
     expect(
       threadTurnsListResponseToEvents({ data: thread.turns }, projectId, "thread_1" as never),
-    ).toContainEqual({ type: "turn.status.changed", turnId: "turn_1", status: "completed" });
+    ).toContainEqual({
+      type: "turn.status.changed",
+      threadId: "thread_1",
+      turnId: "turn_1",
+      status: "completed",
+    });
   });
 
   it("normalizes command, network, file-change, and user-input approval requests", () => {
@@ -206,15 +319,67 @@ describe("Codex app-server event normalization", () => {
           networkApprovalContext: { host: "example.com" },
         },
       }),
-    ).toMatchObject({ request: { kind: "network" } });
+    ).toMatchObject({
+      request: {
+        kind: "network",
+        detail: "network: example.com",
+      },
+    });
 
     expect(
       codexServerRequestToEvent({
         id: "approval_3",
         method: "item/fileChange/requestApproval",
-        params: { threadId: "thread_1", turnId: "turn_1", itemId: "item_2" },
+        params: {
+          threadId: "thread_1",
+          turnId: "turn_1",
+          itemId: "item_2",
+          grantRoot: "/repo/tmp",
+          reason: "Need to write generated output",
+        },
       }),
-    ).toMatchObject({ request: { kind: "file_change" } });
+    ).toMatchObject({
+      request: {
+        kind: "file_change",
+        detail: "grant root: /repo/tmp\nNeed to write generated output",
+      },
+    });
+
+    expect(
+      codexServerRequestToEvent({
+        id: "approval_5",
+        method: "item/permissions/requestApproval",
+        params: {
+          threadId: "thread_1",
+          turnId: "turn_1",
+          itemId: "item_4",
+          cwd: "/repo",
+          reason: "Need broader project access",
+          permissions: {
+            network: { enabled: true },
+            fileSystem: {
+              read: ["/repo/docs"],
+              write: ["/repo/tmp"],
+              entries: [
+                { access: "write", path: { type: "glob_pattern", pattern: "/repo/*.md" } },
+              ],
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      request: {
+        kind: "network",
+        detail: [
+          "cwd: /repo",
+          "Need broader project access",
+          "network permission: enabled",
+          "read access: /repo/docs",
+          "write access: /repo/tmp",
+          "write access: glob:/repo/*.md",
+        ].join("\n"),
+      },
+    });
 
     expect(
       codexServerRequestToEvent({
