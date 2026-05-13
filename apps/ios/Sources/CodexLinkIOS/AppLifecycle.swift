@@ -194,6 +194,18 @@ public final class CodexLinkAppViewModel: ObservableObject {
                 recordError("CodexLink Relay client is missing.")
                 connectionState = .failed
                 return
+            } catch CodexLinkRelayClientError.relayError(let code, let message)
+                where code == "NOT_FOUND"
+                && (message.contains("User not found") || message.contains("Device not found")) {
+                // Relay state was reset (e.g. container restart without
+                // persistence, or persistence wiped) but iPhone still has
+                // a stale device session for an unknown user/device.
+                // Drop local state so the app returns to the pair screen
+                // with a fresh placeholder session on next launch / restart.
+                CodexLinkAppLogger.relay.error("Relay returned NOT_FOUND for our session (\(message, privacy: .public)); clearing local session state and bookmark")
+                recordError("Codex Link Relay no longer recognizes this device. Re-pair from the Mac.")
+                clearLocalSessionState()
+                return
             } catch {
                 attempt += 1
                 let delaySeconds = min(30, attempt * 2)
